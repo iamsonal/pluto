@@ -22,7 +22,7 @@ When unsure, use `RunFlowWithExternalEffects`. A `RunFlow` tool whose Flow sends
 4. In Implementation Configuration, enter:
 
    ```json
-   { "flowApiName": "Close_Case_With_Comment", "allowSystemContext": true }
+   { "flowApiName": "Close_Case_With_Comment" }
    ```
 
 5. Save. Core builds one optional input for each text, number, date, or checkbox input variable of the active Flow version, on each run. The variable's description is what the model reads, so write one in Flow Builder. Collection, record, and Apex-defined variables are left out.
@@ -31,20 +31,21 @@ When unsure, use `RunFlowWithExternalEffects`. A `RunFlow` tool whose Flow sends
    ```json
    {
      "flowApiName": "Close_Case_With_Comment",
-     "allowSystemContext": true,
      "inputOverrides": { "recordId": { "required": true }, "comment": { "required": true, "maxLength": 1000 } }
    }
    ```
 
-## Why allowSystemContext is required
+## What the Flow can reach
 
-A Flow started from Apex runs with system access to objects and fields, even when the Flow's **How to Run the Flow** setting is Default Mode. `allowSystemContext: true` is you saying "I checked what this Flow can change." Core refuses the tool without it.
+A Flow started from Apex runs with system access to objects and fields, even when the Flow's **How to Run the Flow** setting is Default Mode. The Agent Execution Identity's object and field permissions do not limit what the Flow reads or changes.
 
 :::caution
-Before you set it, read the Flow. Check every record it reads or changes. Limit it to the records the agent should touch.
+Before you activate the tool, read the Flow. Check every record it reads or changes. Limit it to the records the agent should touch. Check it again whenever someone activates a new version of the Flow.
 :::
 
-On a run a person started, Core refuses to run the Flow unless the person can edit every record whose Id is a Flow input.
+On a run a person started, Core refuses to run the Flow unless the person can edit every record whose Id is a Flow input. Unattended runs have no such check.
+
+Tools saved before this change may still have `"allowSystemContext": true` in Implementation Configuration. Core ignores it, and you can delete it.
 
 ## What the agent gets back
 

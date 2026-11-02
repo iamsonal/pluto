@@ -31,12 +31,12 @@ public with sharing class ToolAuthoringController {
         'Description__c',
         'IsActive__c',
         'SortOrder__c',
-        'RequiresApproval__c',
+        'ApprovalMode__c',
         'ApproverType__c',
         'ApproverUser__c',
         'ApproverQueue__c',
         'ApprovalRoute__c',
-        'ApprovalTimeoutHours__c',
+        'ApprovalTimeoutMinutes__c',
         'ApprovalExpiryAction__c',
         'AllowedSensitiveDataCategories__c'
     };
@@ -85,6 +85,10 @@ public with sharing class ToolAuthoringController {
         public Boolean createable { get; set; }
         @AuraEnabled
         public Boolean updateable { get; set; }
+        @AuraEnabled
+        public Boolean filterable { get; set; }
+        @AuraEnabled
+        public Boolean sortable { get; set; }
         @AuraEnabled
         public Boolean isPicklist { get; set; }
         @AuraEnabled
@@ -327,7 +331,7 @@ public with sharing class ToolAuthoringController {
             } else if (EDITABLE_TOOL_FIELDS.contains(fieldName)) {
                 tool.put(fieldName, supplied.get(fieldName));
             } else {
-                throw handled('The tool draft contains a field that cannot be edited here.');
+                throw handled('The tool draft contains a field that cannot be edited here: ' + fieldName + '. Refresh the page and try again.');
             }
         }
         String type = blankToNull(toolType);
@@ -538,12 +542,12 @@ public with sharing class ToolAuthoringController {
     @AuraEnabled(cacheable=true)
     public static List<Option> searchStandardTargetSObjects(String term, String operation) {
         List<Option> matches = new List<Option>();
-        if (String.isBlank(term) || term.trim().length() < 2) {
+        if ((String.isBlank(term) && !'QueryRecords'.equalsIgnoreCase(operation)) || (!String.isBlank(term) && term.trim().length() < 2)) {
             return matches;
         }
         Boolean isCreate = 'CreateRecord'.equalsIgnoreCase(operation);
         Boolean isUpdate = 'UpdateRecord'.equalsIgnoreCase(operation);
-        String needle = term.trim().toLowerCase();
+        String needle = String.isBlank(term) ? '' : term.trim().toLowerCase();
         for (Schema.SObjectType objectType : Schema.getGlobalDescribe().values()) {
             Schema.DescribeSObjectResult describe = objectType.getDescribe(SObjectDescribeOptions.DEFERRED);
             if (
@@ -582,6 +586,8 @@ public with sharing class ToolAuthoringController {
             found.required = !describe.isNillable() && !describe.isDefaultedOnCreate() && describe.getType() != Schema.DisplayType.BOOLEAN;
             found.createable = describe.isCreateable();
             found.updateable = describe.isUpdateable();
+            found.filterable = describe.isFilterable();
+            found.sortable = describe.isSortable();
             found.isPicklist =
                 describe.getType() == Schema.DisplayType.PICKLIST ||
                 describe.getType() == Schema.DisplayType.MULTIPICKLIST ||

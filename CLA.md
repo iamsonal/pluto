@@ -3,7 +3,7 @@
 Version 1.0, 2026-10-09
 
 This agreement is between you and Sonal (the "Maintainer"), who maintains
-Pluto at https://github.com/iamsonal/aiAgentStudio. It covers every
+Pluto at https://github.com/iamsonal/pluto. It covers every
 Contribution you submit to Pluto, now and in the future.
 
 You sign it by posting the comment below on a pull request. The CLA check

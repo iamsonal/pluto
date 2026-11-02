@@ -28,4 +28,14 @@ private class SchemaFieldClassificationServiceTest {
         System.assertEquals(true, SchemaFieldClassificationService.isSensitive('Account', 'Description'));
         System.assertEquals(false, SchemaFieldClassificationService.isSensitive('Account', 'Name'));
     }
+
+    @IsTest
+    static void protectsEveryLevelExceptPublicAndInternal() {
+        for (String level : new List<String>{ 'Confidential', 'Restricted', 'MissionCritical', 'Highly Sensitive' }) {
+            System.assertEquals(true, SchemaFieldClassificationService.isSensitiveLevel(level), level + ' must be protected.');
+        }
+        for (String level : new List<String>{ null, '', 'Public', 'Internal' }) {
+            System.assertEquals(false, SchemaFieldClassificationService.isSensitiveLevel(level), level + ' must reach the model.');
+        }
+    }
 }

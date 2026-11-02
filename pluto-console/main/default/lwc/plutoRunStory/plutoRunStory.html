@@ -72,7 +72,12 @@
                 <!-- The answer is what most readers came for, so it leads. -->
                 <template lwc:if={headline}>
                     <blockquote class="headline">
-                        <p>{headline}</p>
+                        <template lwc:if={headlineMarkdown}>
+                            <c-markdown-viewer value={headline} compact-mode></c-markdown-viewer>
+                        </template>
+                        <template lwc:else>
+                            <p>{headline}</p>
+                        </template>
                     </blockquote>
                 </template>
 
@@ -397,7 +402,7 @@
                                                 <figcaption class="step-rationale-label">
                                                     The agent's reasoning
                                                     <lightning-helptext
-                                                        content="The model wrote this when it asked for the call. Agent Core does not check it."
+                                                        content="The model wrote this when it asked for the call. Pluto Core does not check it."
                                                         class="step-rationale-help"></lightning-helptext>
                                                 </figcaption>
                                                 <blockquote class="step-rationale-text">{item.rationale}</blockquote>

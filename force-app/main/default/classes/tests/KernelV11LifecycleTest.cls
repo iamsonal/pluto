@@ -20,7 +20,7 @@ private class KernelV11LifecycleTest {
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         definition.ToolAuthorizationPolicyClass__c = 'KernelTestToolPolicy';
         update definition;
-        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'denied_tool', '{"type":"object"}');
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'denied_tool');
         AgentKernelModels.StartResult started = AgentKernelTestFactory.startRunWithoutDispatch(definition);
         AgentKernelTestFactory.applyOutcome(
             AgentKernelModels.continueWith(
@@ -65,7 +65,7 @@ private class KernelV11LifecycleTest {
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         definition.ToolAuthorizationPolicyClass__c = 'KernelTestToolPolicy';
         update definition;
-        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'isolated_policy_tool', '{"type":"object"}');
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'isolated_policy_tool');
         AgentKernelModels.StartResult started = AgentKernelTestFactory.startRunWithoutDispatch(definition);
         AgentKernelTestFactory.applyOutcome(
             AgentKernelModels.continueWith(
@@ -90,16 +90,334 @@ private class KernelV11LifecycleTest {
     }
 
     @IsTest
-    static void approvalRearmsSameToolOperation() {
+    static void aPolicyQueueThatIsMissingPausesTheRunInsteadOfFallingBack() {
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        KernelTestToolPolicy.configuredApproverQueue = 'No_Such_Approval_Queue';
+        AgentRun__c run = runPolicyCall('missing_queue_tool');
+
+        System.assertEquals(AgentKernelModels.RUN_STATUS_PAUSED, run.Status__c);
+        System.assertEquals('APPROVAL_ASSIGNMENT_UNRESOLVED', run.ErrorCode__c);
+        System.assert(run.ErrorMessage__c.contains('No_Such_Approval_Queue'), run.ErrorMessage__c);
+        System.assertEquals(0, [SELECT COUNT() FROM AgentApproval__c WHERE AgentRun__c = :run.Id], 'Nobody else decides instead.');
+    }
+
+    @IsTest
+    static void aHoldThatNamesNoApproverPausesTheRun() {
         KernelTestTool.invocationCount = 0;
         KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
-        Id approverId = AgentKernelTestFactory.approverUser();
-        KernelTestToolPolicy.configuredApproverId = approverId;
+        AgentRun__c run = runPolicyCall('unnamed_approver_tool');
+
+        System.assertEquals(AgentKernelModels.RUN_STATUS_PAUSED, run.Status__c);
+        System.assertEquals('TOOL_AUTHORIZATION_POLICY_INVALID', run.ErrorCode__c);
+        System.assert(run.ErrorMessage__c.contains('without naming an approver'), run.ErrorMessage__c);
+        System.assertEquals(0, [SELECT COUNT() FROM AgentApproval__c WHERE AgentRun__c = :run.Id]);
+        System.assertEquals(0, KernelTestTool.invocationCount, 'A held call never runs without an approval.');
+    }
+
+    @IsTest
+    static void aPolicyDecidedCallWaitsForThePolicyApprover() {
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        Id policyApproverId = AgentKernelTestFactory.approverUser();
+        KernelTestToolPolicy.configuredApproverUserId = policyApproverId;
+        AgentRun__c run = runPolicyCall('policy_routed_tool');
+
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, run.Status__c);
+        AgentApproval__c approval = AgentKernelTestFactory.pendingApproval(run.Id);
+        System.assertEquals(policyApproverId, approval.OwnerId);
+        System.assert(approval.ExpiresAt__c <= System.now().addMinutes(60), 'The policy deadline replaces the tool one.');
+        System.assertEquals(AgentApprovalService.REQUIRED_BY_POLICY, waitingPayload(run.Id).get('requiredBy'));
+    }
+
+    @IsTest
+    static void thePolicyIsNeverAskedAboutOtherTools() {
+        KernelTestTool.invocationCount = 0;
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.Deny;
+        AgentDefinition__c definition = policyAgent();
+        AgentTool__c plain = AgentKernelTestFactory.createTool(definition.Id, 'plain_tool', '{"type":"object"}');
+        Id toolApproverId = AgentKernelTestFactory.approverUser();
+        AgentTool__c pinned = AgentKernelTestFactory.createTool(definition.Id, 'pinned_tool', '{"type":"object"}');
+        pinned.ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
+        pinned.ApproverType__c = AgentKernelModels.APPROVER_USER;
+        pinned.ApproverUser__c = toolApproverId;
+        pinned.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY;
+        AgentKernelTestFactory.updateRecord(pinned);
+
+        AgentRun__c plainRun = runCall(definition, plain);
+        System.assertEquals(1, KernelTestTool.invocationCount, 'Not Required runs the call; the denying policy is not asked.');
+        System.assertNotEquals(AgentKernelModels.RUN_STATUS_PAUSED, plainRun.Status__c);
+        System.assertEquals(null, KernelTestToolPolicy.lastRequest);
+
+        AgentRun__c pinnedRun = runCall(definition, pinned);
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, pinnedRun.Status__c, 'Always Required waits; the denying policy is not asked.');
+        System.assertEquals(toolApproverId, AgentKernelTestFactory.pendingApproval(pinnedRun.Id).OwnerId);
+        System.assertEquals(AgentApprovalService.REQUIRED_BY_TOOL, waitingPayload(pinnedRun.Id).get('requiredBy'));
+        System.assertEquals(null, KernelTestToolPolicy.lastRequest);
+    }
+
+    @IsTest
+    static void anApprovedCallRunsWhenThePolicyNamesSomeoneElse() {
+        KernelTestTool.invocationCount = 0;
+        AgentRun__c run = approvedPolicyCall('escalated_tool');
+        KernelTestToolPolicy.configuredApproverUserId = AgentKernelTestFactory.approverUser();
+
+        AgentApproval__c approval = AgentKernelTestFactory.pendingApproval(run.Id);
+        AgentCommand__c command = lease(approval.AgentCommand__c, 'escalated-lease');
+        System.runAs(AgentKernelTestFactory.worker(run.Id)) {
+            new ToolCommandQueueable(run.Id, command.Id, command.ExpectedRunRevision__c, command.OperationKey__c, command.LeaseToken__c).execute(null);
+        }
+
+        System.assertEquals(1, KernelTestTool.invocationCount, 'A person approved this exact call, so it is not asked again.');
+        System.assertEquals(1, [SELECT COUNT() FROM AgentApproval__c WHERE AgentRun__c = :run.Id]);
+    }
+
+    @IsTest
+    static void aDenyAfterApprovalStillStopsTheCall() {
+        KernelTestTool.invocationCount = 0;
+        AgentRun__c run = approvedPolicyCall('revoked_tool');
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.Deny;
+
+        AgentApproval__c approval = AgentKernelTestFactory.pendingApproval(run.Id);
+        AgentCommand__c command = lease(approval.AgentCommand__c, 'revoked-lease');
+        System.runAs(AgentKernelTestFactory.worker(run.Id)) {
+            new ToolCommandQueueable(run.Id, command.Id, command.ExpectedRunRevision__c, command.OperationKey__c, command.LeaseToken__c).execute(null);
+        }
+
+        System.assertEquals(0, KernelTestTool.invocationCount);
+        System.assertEquals(AgentKernelModels.ERROR_TOOL_AUTHORIZATION_DENIED, AgentKernelTestFactory.getCommand(command.Id).ErrorCode__c);
+    }
+
+    /** A policy-decided call that its approver has approved, ready to run again. */
+    private static AgentRun__c approvedPolicyCall(String toolName) {
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        Id supportId = AgentKernelTestFactory.approverUser();
+        KernelTestToolPolicy.configuredApproverUserId = supportId;
+        AgentRun__c run = runPolicyCall(toolName);
+        AgentApproval__c approval = AgentKernelTestFactory.pendingApproval(run.Id);
+        System.runAs(new User(Id = supportId)) {
+            AgentKernel.decideApproval(AgentKernelTestFactory.approvalDecision(approval.Id, true, null));
+        }
+        return AgentKernelTestFactory.getRun(run.Id);
+    }
+
+    private static Map<String, Object> waitingPayload(Id runId) {
+        AgentEvent__c waiting;
+        for (AgentEvent__c event : AgentKernelTestFactory.getEvents(runId)) {
+            if (event.EventType__c == AgentKernelModels.EVENT_RUN_WAITING) {
+                waiting = event;
+            }
+        }
+        return (Map<String, Object>) JSON.deserializeUntyped(waiting.Payload__c);
+    }
+
+    @IsTest
+    static void policyRequestBuildsAnswersAndReadsInputs() {
+        AgentKernelModels.ToolAuthorizationRequest request = new AgentKernelModels.ToolAuthorizationRequest();
+        request.input = '{"amount":329.97,"count":3,"note":"text"}';
+        System.assertEquals(329.97, request.decimalInput('amount'));
+        System.assertEquals(3, request.decimalInput('count'));
+        System.assertEquals(null, request.decimalInput('note'), 'Text is not a number.');
+        System.assertEquals(null, request.decimalInput('missing'));
+        System.assertEquals('text', request.inputValue('note'));
+
+        AgentKernelModels.ToolAuthorizationRequest malformed = new AgentKernelModels.ToolAuthorizationRequest();
+        malformed.input = 'not json';
+        System.assertEquals(null, malformed.decimalInput('amount'), 'Malformed input reads as missing, so a policy denies it.');
+
+        System.assertEquals(AgentKernelModels.ToolAuthorizationDecision.Allow, request.allow().decision);
+        AgentKernelModels.ToolAuthorizationResponse denied = request.deny('Too large.');
+        System.assertEquals(AgentKernelModels.ToolAuthorizationDecision.Deny, denied.decision);
+        System.assertEquals('Too large.', denied.reason);
+        AgentKernelModels.ToolApprovalResponse held = request.requireApproval('Over 200.').byQueue('Finance').withTimeoutMinutes(10);
+        System.assertEquals(AgentKernelModels.ToolAuthorizationDecision.RequireApproval, held.decision);
+        System.assertEquals('Finance', held.approverQueue);
+        System.assertEquals(10, held.timeoutMinutes);
+        held.byUser(UserInfo.getUserId());
+        System.assertEquals(UserInfo.getUserId(), held.approverUserId);
+        System.assertEquals(null, held.approverQueue, 'An answer names one approver; the last one named wins.');
+    }
+
+    private static AgentDefinition__c policyAgent() {
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         AgentKernelTestFactory.useDelegatedPrincipal(definition);
         definition.ToolAuthorizationPolicyClass__c = 'KernelTestToolPolicy';
         update definition;
-        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'approved_tool', '{"type":"object"}');
+        return definition;
+    }
+
+    /** Runs one call of a Decided by Policy tool on a new policy agent, and returns the run. */
+    @IsTest
+    static void rescueAfterAnExpiredApprovalAsksAgainForAnInOrgTool() {
+        assertRescueAsksAgain(AgentToolTypeTestFixtures.IN_ORG);
+    }
+
+    @IsTest
+    static void rescueAfterAnExpiredApprovalAsksAgainForAnOutsideEffectsTool() {
+        // Rescue never retries an unconfirmed outside call, but this call never started.
+        assertRescueAsksAgain(AgentToolTypeTestFixtures.EXTERNAL);
+    }
+
+    private static void assertRescueAsksAgain(String toolType) {
+        Id approverId = AgentKernelTestFactory.approverUser();
+        KernelTestTool.invocationCount = 0;
+        AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
+        AgentKernelTestFactory.useDelegatedPrincipal(definition);
+        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'held_tool', '{"type":"object"}');
+        tool.ToolType__c = toolType;
+        tool.ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
+        tool.ApproverType__c = AgentKernelModels.APPROVER_USER;
+        tool.ApproverUser__c = approverId;
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_PAUSE;
+        AgentKernelTestFactory.updateRecord(tool);
+
+        AgentRun__c run = expireApproval(runCall(definition, tool));
+        Id callId = run.CurrentCommand__c;
+        System.assertEquals(AgentKernelModels.RUN_STATUS_PAUSED, run.Status__c, toolType);
+        System.assertEquals('WAIT_EXPIRED', run.ErrorCode__c, toolType);
+        System.assertEquals(AgentKernelModels.ERROR_TOOL_APPROVAL_EXPIRED, AgentKernelTestFactory.getCommand(callId).ErrorCode__c, toolType);
+        System.assertEquals(AgentKernelModels.APPROVAL_STATUS_EXPIRED, AgentKernelTestFactory.pendingApproval(run.Id).Status__c, toolType);
+
+        System.assertEquals(callId, rescue(run), 'Rescue asks again for the same call, whatever its effects: ' + toolType);
+        System.assertEquals('reapprove', rescuePayload(run.Id).get('mode'), toolType);
+        run = runAgain(run);
+        AgentApproval__c second = AgentKernelTestFactory.pendingApproval(run.Id);
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, run.Status__c, toolType);
+        System.assertEquals(0, KernelTestTool.invocationCount, 'Nobody approved the call, so it does not run: ' + toolType);
+        System.assertEquals(AgentKernelModels.APPROVAL_STATUS_PENDING, second.Status__c, toolType);
+        System.assertEquals(approverId, second.OwnerId, toolType);
+        System.assert(second.ExpiresAt__c > System.now(), 'The new approval has a new deadline: ' + toolType);
+        System.assertEquals(2, [SELECT COUNT() FROM AgentApproval__c WHERE AgentRun__c = :run.Id], 'The expired approval stays as history.');
+
+        System.runAs(new User(Id = approverId)) {
+            AgentKernel.decideApproval(AgentKernelTestFactory.approvalDecision(second.Id, true, null));
+        }
+        runAgain(AgentKernelTestFactory.getRun(run.Id));
+        System.assertEquals(1, KernelTestTool.invocationCount, 'The approved call runs once: ' + toolType);
+    }
+
+    @IsTest
+    static void rescueAfterAnExpiredPolicyApprovalAsksThePolicyAgain() {
+        KernelTestTool.invocationCount = 0;
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        KernelTestToolPolicy.configuredApproverUserId = AgentKernelTestFactory.approverUser();
+        AgentDefinition__c definition = policyAgent();
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'held_refund');
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_PAUSE;
+        AgentKernelTestFactory.updateRecord(tool);
+        AgentRun__c run = expireApproval(runCall(definition, tool));
+
+        KernelTestToolPolicy.lastRequest = null;
+        rescue(run);
+        run = runAgain(run);
+
+        System.assertNotEquals(null, KernelTestToolPolicy.lastRequest, 'The policy decides the call again with today\'s rules.');
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, run.Status__c);
+        System.assertEquals(AgentKernelModels.APPROVAL_STATUS_PENDING, AgentKernelTestFactory.pendingApproval(run.Id).Status__c);
+        System.assertEquals(0, KernelTestTool.invocationCount);
+    }
+
+    @IsTest
+    static void rescueAfterAnExpiredApprovalRefusesUsersWithoutRunControl() {
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        KernelTestToolPolicy.configuredApproverUserId = AgentKernelTestFactory.approverUser();
+        AgentDefinition__c definition = policyAgent();
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'held_refund');
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_PAUSE;
+        AgentKernelTestFactory.updateRecord(tool);
+        AgentRun__c run = expireApproval(runCall(definition, tool));
+
+        System.runAs(AgentKernelTestFactory.userWith(new List<String>())) {
+            try {
+                rescue(run);
+                System.assert(false, 'Rescue needs run control.');
+            } catch (AgentKernelException expected) {
+                // Without access the run is not found; with read access, Run Control is still required.
+                System.assert(
+                    expected instanceof AgentKernelException.NotFoundException || expected.getMessage().contains('Run Control'),
+                    expected.getMessage()
+                );
+            }
+        }
+        run = AgentKernelTestFactory.getRun(run.Id);
+        System.assertEquals(AgentKernelModels.RUN_STATUS_PAUSED, run.Status__c);
+        System.assertEquals(1, [SELECT COUNT() FROM AgentApproval__c WHERE AgentRun__c = :run.Id], 'No new approval is asked for.');
+    }
+
+    /** Lets the run's approval pass its deadline with Pause for Operator, as the recovery job does. */
+    private static AgentRun__c expireApproval(AgentRun__c run) {
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, run.Status__c);
+        AgentKernelTestFactory.updateRecord(new AgentRun__c(Id = run.Id, WaitExpiresAt__c = System.now().addMinutes(-1)));
+        AgentKernelRecovery.expireIntentionalWaits(new Map<Id, Decimal>{ run.Id => run.Revision__c }, System.now());
+        return AgentKernelTestFactory.getRun(run.Id);
+    }
+
+    private static Id rescue(AgentRun__c run) {
+        AgentKernelModels.RescueRequest request = new AgentKernelModels.RescueRequest();
+        request.runId = run.Id;
+        request.expectedRunRevision = run.Revision__c;
+        return AgentKernel.rescue(request);
+    }
+
+    private static Map<String, Object> rescuePayload(Id runId) {
+        AgentEvent__c rescued = [
+            SELECT Payload__c
+            FROM AgentEvent__c
+            WHERE AgentRun__c = :runId AND EventType__c = :AgentKernelModels.EVENT_RUN_RESCUED
+            WITH SYSTEM_MODE
+            ORDER BY Sequence__c DESC
+            LIMIT 1
+        ];
+        return (Map<String, Object>) JSON.deserializeUntyped(rescued.Payload__c);
+    }
+
+    /** Runs the run's current tool call as its worker would. */
+    private static AgentRun__c runAgain(AgentRun__c run) {
+        run = AgentKernelTestFactory.getRun(run.Id);
+        AgentCommand__c command = lease(run.CurrentCommand__c, 'again-' + String.valueOf(Crypto.getRandomInteger()));
+        System.runAs(AgentKernelTestFactory.worker(run.Id)) {
+            new ToolCommandQueueable(run.Id, command.Id, command.ExpectedRunRevision__c, command.OperationKey__c, command.LeaseToken__c).execute(null);
+        }
+        return AgentKernelTestFactory.getRun(run.Id);
+    }
+
+    private static AgentRun__c runPolicyCall(String toolName) {
+        AgentDefinition__c definition = policyAgent();
+        return runCall(definition, AgentKernelTestFactory.createPolicyTool(definition.Id, toolName));
+    }
+
+    /** Runs one call of the tool in a new run of the agent, and returns the run. */
+    private static AgentRun__c runCall(AgentDefinition__c definition, AgentTool__c tool) {
+        AgentConfigService.clearCacheForTest();
+        AgentKernelModels.StartResult started = AgentKernelTestFactory.startRunWithoutDispatch(definition);
+        AgentKernelTestFactory.acceptLoopback(started);
+        AgentKernelTestFactory.applyOutcome(
+            AgentKernelModels.continueWith(
+                started.runId,
+                started.commandId,
+                started.revision,
+                started.operationKey,
+                null,
+                new AgentKernelModels.CommandSpec(AgentKernelModels.COMMAND_TYPE_TOOL, '{}', tool.DeveloperName__c)
+            )
+        );
+        AgentRun__c run = AgentKernelTestFactory.getRun(started.runId);
+        AgentCommand__c command = lease(run.CurrentCommand__c, tool.DeveloperName__c + '-lease');
+        System.runAs(AgentKernelTestFactory.worker(run.Id)) {
+            new ToolCommandQueueable(run.Id, command.Id, command.ExpectedRunRevision__c, command.OperationKey__c, command.LeaseToken__c).execute(null);
+        }
+        return AgentKernelTestFactory.getRun(run.Id);
+    }
+
+    @IsTest
+    static void approvalRearmsSameToolOperation() {
+        KernelTestTool.invocationCount = 0;
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        Id approverId = AgentKernelTestFactory.approverUser();
+        KernelTestToolPolicy.configuredApproverUserId = approverId;
+        AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
+        AgentKernelTestFactory.useDelegatedPrincipal(definition);
+        definition.ToolAuthorizationPolicyClass__c = 'KernelTestToolPolicy';
+        update definition;
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'approved_tool');
         tool.ImplementationConfiguration__c = '{"objectApiName":"Case"}';
         AgentKernelTestFactory.updateRecord(tool);
         AgentKernelModels.StartResult started = AgentKernelTestFactory.startRunWithoutDispatch(definition);
@@ -128,6 +446,7 @@ private class KernelV11LifecycleTest {
         System.assertEquals(command.Id, run.WaitingCommand__c);
         System.assertEquals(0, KernelTestTool.invocationCount);
         System.assertEquals(false, KernelTestToolPolicy.lastRequest.hasExternalEffects);
+        System.assertEquals([SELECT ToolType__c FROM AgentTool__c WHERE Id = :tool.Id].ToolType__c, KernelTestToolPolicy.lastRequest.toolType);
         System.assertEquals(run.ExecutionIdentity__c, KernelTestToolPolicy.lastRequest.executionIdentityId);
         System.assertEquals(run.InitiatingUser__c, KernelTestToolPolicy.lastRequest.initiatingActorId);
         System.assertEquals(run.ResolvedPrincipalUser__c, KernelTestToolPolicy.lastRequest.resolvedPrincipalId);
@@ -165,10 +484,11 @@ private class KernelV11LifecycleTest {
     static void initiatingUserPolicyApprovalPausesInsteadOfWaiting() {
         KernelTestTool.invocationCount = 0;
         KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        KernelTestToolPolicy.configuredApproverUserId = AgentKernelTestFactory.approverUser();
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         definition.ToolAuthorizationPolicyClass__c = 'KernelTestToolPolicy';
         update definition;
-        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'attended_tool', '{"type":"object"}');
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'attended_tool');
         AgentKernelModels.StartResult started = AgentKernelTestFactory.startRunWithoutDispatch(definition);
         AgentKernelTestFactory.applyOutcome(
             AgentKernelModels.continueWith(
@@ -196,12 +516,12 @@ private class KernelV11LifecycleTest {
         KernelTestTool.invocationCount = 0;
         KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
         Id approverId = AgentKernelTestFactory.approverUser();
-        KernelTestToolPolicy.configuredApproverId = approverId;
+        KernelTestToolPolicy.configuredApproverUserId = approverId;
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         AgentKernelTestFactory.useDelegatedPrincipal(definition);
         definition.ToolAuthorizationPolicyClass__c = 'KernelTestToolPolicy';
         update definition;
-        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'changed_approved_tool', '{"type":"object"}');
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'changed_approved_tool');
         tool.ImplementationConfiguration__c = '{"objectApiName":"Case"}';
         AgentKernelTestFactory.updateRecord(tool);
         AgentKernelModels.StartResult started = AgentKernelTestFactory.startRunWithoutDispatch(definition);

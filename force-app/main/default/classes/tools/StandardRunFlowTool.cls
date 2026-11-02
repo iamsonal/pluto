@@ -15,9 +15,10 @@
  * Standard tool: run an active autolaunched flow and return its outputs.
  *
  * Standard tool types RunFlow and RunFlowWithExternalEffects. Operator
- * configuration must specify flowApiName and set allowSystemContext to true:
- * an autolaunched flow started from Apex runs with system access to objects
- * and fields, even in Default Mode (confirmed in an org, 2026-10-02).
+ * configuration must specify flowApiName. An autolaunched flow started from
+ * Apex runs with system access to objects and fields, even in Default Mode
+ * (confirmed in an org, 2026-10-02). A stored allowSystemContext key from
+ * earlier builds is ignored.
  *
  * Tool input (model-visible, built on each run from the active version's
  * input variables): a flat object of flow input variables, for example
@@ -124,15 +125,6 @@ public inherited sharing class StandardRunFlowTool implements ITool, IToolAuthor
                 'The active autolaunched Flow the agent runs. Its input variables are the agent\'s inputs.'
             )
         );
-        authoring.settings.add(
-            new AgentKernelModels.ToolSetting(
-                'allowSystemContext',
-                'Allow System Context',
-                'boolean',
-                true,
-                'Started by an agent, the Flow runs with system access to objects and fields. Check this after you audit what it can read and change.'
-            )
-        );
         try {
             Map<String, Object> config = StandardToolSupport.configuration(configuration == null ? null : configuration.implementationConfiguration);
             String flowApiName = StandardToolSupport.requiredConfig(config, 'flowApiName', 'flowApiName');
@@ -149,24 +141,15 @@ public inherited sharing class StandardRunFlowTool implements ITool, IToolAuthor
     /**
      * An active autolaunched flow. Started from Apex, every autolaunched flow
      * runs with system access to objects and fields, Default Mode included,
-     * so it can reach data the agent's user cannot. It runs only after the
-     * operator audits it and sets allowSystemContext to true.
+     * so it can reach data the agent's user cannot. The admin who names it
+     * owns what it reads and changes, as for an Apex tool class.
      */
     private static FlowDefinitionView checkedDefinition(Map<String, Object> config) {
         String flowApiName = StandardToolSupport.requiredConfig(config, 'flowApiName', 'flowApiName');
         if (!Pattern.matches('^[A-Za-z][A-Za-z0-9_]*$', flowApiName)) {
             throw StandardToolSupport.permanent('flowApiName must be a valid autolaunched flow API name.');
         }
-        FlowDefinitionView definition = activeDefinition(flowApiName);
-        if (config.get('allowSystemContext') != true) {
-            throw StandardToolSupport.permanent(
-                'Flow "' +
-                    flowApiName +
-                    '" runs with system access to objects and fields when an agent starts it. ' +
-                    'Audit what it can read and change, then set allowSystemContext to true.'
-            );
-        }
-        return definition;
+        return activeDefinition(flowApiName);
     }
 
     private static FlowDefinitionView activeDefinition(String flowApiName) {

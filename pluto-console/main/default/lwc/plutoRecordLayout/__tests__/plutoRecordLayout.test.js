@@ -301,6 +301,15 @@ describe('c-pluto-record-layout', () => {
             ]);
         });
 
+        it('places a package field after a layout field', async () => {
+            const element = await makeForm({ mode: 'view', additionalFields: [{ fieldApiName: 'ApprovalRoute__c', after: 'ApproverUser__c' }] });
+            const approval = element.shadowRoot.querySelectorAll('[data-id="layout-section"]')[1];
+            expect([...approval.querySelectorAll('[data-id="layout-item"]')].map((node) => node.dataset.field)).toEqual([
+                'ApproverUser__c',
+                'ApprovalRoute__c'
+            ]);
+        });
+
         it('reads fields the layout does not carry through optional fields', async () => {
             const element = await makeForm({ additionalFields: [{ fieldApiName: 'ApprovalRoute__c' }], hiddenFields: ['ImplementationType__c'] });
             expect(recordAdapter.getLastConfig().optionalFields).toEqual(
@@ -590,6 +599,19 @@ describe('c-pluto-record-layout', () => {
                     { controllingField: 'Name', controllingValue: 'Other', showFields: ['SortOrder__c'] }
                 ]
             });
+            expect(inputFor(element, 'SortOrder__c')).not.toBeUndefined();
+        });
+
+        it('hides a field a matching rule hides, even while another rule shows it', async () => {
+            const element = await makeForm({
+                fieldDependencies: [
+                    { controllingField: 'Name', controllingValue: 'Original', showFields: ['SortOrder__c'] },
+                    { controllingField: 'IsActive__c', controllingValue: true, hideFields: ['SortOrder__c'] }
+                ]
+            });
+            expect(inputFor(element, 'SortOrder__c')).toBeUndefined();
+            inputFor(element, 'IsActive__c').dispatchEvent(new CustomEvent('change', { detail: { checked: false, value: false } }));
+            await flush();
             expect(inputFor(element, 'SortOrder__c')).not.toBeUndefined();
         });
 

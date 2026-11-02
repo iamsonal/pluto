@@ -231,7 +231,7 @@ describe('c-pluto-run-story', () => {
         expect(rationale.querySelector('figcaption').textContent).toContain("The agent's reasoning");
         expect(rationale.textContent).not.toContain('not verified');
         expect(rationale.querySelector('blockquote').textContent).toBe('The case number is in the input.');
-        expect(rationale.querySelector('lightning-helptext').content).toContain('Agent Core does not check it');
+        expect(rationale.querySelector('lightning-helptext').content).toContain('Pluto Core does not check it');
     });
 
     it('loads a step payload only when the step is opened', async () => {
@@ -500,8 +500,20 @@ describe('c-pluto-run-story', () => {
     it('shows a plain-text answer once, as the headline', async () => {
         const element = await render(story({ Output__c: 'The case is a billing question.' }));
         const root = element.shadowRoot;
-        expect(root.querySelector('.headline').textContent).toContain('The case is a billing question.');
+        const viewer = root.querySelector('.headline c-markdown-viewer');
+        expect(viewer.value).toBe('The case is a billing question.');
+        expect(viewer.compactMode).toBe(true);
+        expect(root.querySelector('.headline p')).toBeNull();
         const labels = [...root.querySelectorAll('.outcome c-pluto-run-story-payload')].map((payload) => payload.label);
+        expect(labels).toEqual(['Input']);
+    });
+
+    it('renders a Markdown answer in the headline when the agent has no output format', async () => {
+        const markdown = '## Done\n\n- Closed the case.';
+        const element = await render(story({ Output__c: markdown }));
+        const viewer = element.shadowRoot.querySelector('.headline c-markdown-viewer');
+        expect(viewer.value).toBe(markdown);
+        const labels = [...element.shadowRoot.querySelectorAll('.outcome c-pluto-run-story-payload')].map((payload) => payload.label);
         expect(labels).toEqual(['Input']);
     });
 

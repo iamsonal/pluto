@@ -77,7 +77,8 @@
                     value={control.textValue}
                     disabled={control.disabled}
                     data-name={control.name}
-                    onquerychange={handleQueryChange}></c-tool-query-editor>
+                    onquerychange={handleQueryChange}
+                    onqueryeditingchange={handleQueryEditingChange}></c-tool-query-editor>
             </template>
             <template if:true={control.isReport}>
                 <c-smart-lookup

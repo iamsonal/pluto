@@ -1,6 +1,6 @@
 # Pluto docs site
 
-The public documentation at <https://iamsonal.github.io/aiAgentStudio/>. It covers only the open-source packages: Pluto Core (`force-app`), Pluto Model Adapters, and Pluto Console.
+The public documentation at <https://iamsonal.github.io/pluto/>. It covers only the open-source packages: Pluto Core (`force-app`), Pluto Model Adapters, and Pluto Console.
 
 Built with [Starlight](https://starlight.astro.build). Write for an admin who did not build the feature: short sentences, sentence-case headings, and the labels the admin sees in Setup.
 

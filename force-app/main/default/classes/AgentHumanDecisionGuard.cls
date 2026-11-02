@@ -51,12 +51,33 @@ public without sharing class AgentHumanDecisionGuard {
         return usersHolding(userIds, new Set<String>{ CUSTOM_PERMISSION, AgentApprovalService.RELAY_PERMISSION });
     }
 
-    private static Set<Id> usersHolding(Set<Id> userIds, Set<String> permissionNames) {
-        Set<Id> result = new Set<Id>();
-        if (userIds == null || userIds.isEmpty()) {
-            return result;
+    /**
+     * Whether an active user, other than the excluded ones, holds Approval
+     * Relay. Without one, no Approval Process decision can reach Core.
+     */
+    public static Boolean hasActiveRelayUser(Set<Id> excludedUserIds) {
+        Set<Id> permissionSetIds = permissionSetsGranting(new Set<String>{ AgentApprovalService.RELAY_PERMISSION });
+        if (permissionSetIds.isEmpty()) {
+            return false;
         }
+        Set<Id> excluded = excludedUserIds == null ? new Set<Id>() : excludedUserIds.clone();
+        excluded.remove(null);
         Datetime now = System.now();
+        return [
+                SELECT COUNT()
+                FROM PermissionSetAssignment
+                WHERE
+                    PermissionSetId IN :permissionSetIds
+                    AND Assignee.IsActive = TRUE
+                    AND AssigneeId NOT IN :excluded
+                    AND (ExpirationDate = NULL
+                    OR ExpirationDate > :now)
+                WITH SYSTEM_MODE
+                LIMIT 1
+            ] > 0;
+    }
+
+    private static Set<Id> permissionSetsGranting(Set<String> permissionNames) {
         Set<Id> permissionSetIds = new Set<Id>();
         for (SetupEntityAccess access : [
             SELECT ParentId
@@ -66,6 +87,16 @@ public without sharing class AgentHumanDecisionGuard {
         ]) {
             permissionSetIds.add(access.ParentId);
         }
+        return permissionSetIds;
+    }
+
+    private static Set<Id> usersHolding(Set<Id> userIds, Set<String> permissionNames) {
+        Set<Id> result = new Set<Id>();
+        if (userIds == null || userIds.isEmpty()) {
+            return result;
+        }
+        Datetime now = System.now();
+        Set<Id> permissionSetIds = permissionSetsGranting(permissionNames);
         if (permissionSetIds.isEmpty()) {
             return result;
         }

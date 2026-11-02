@@ -29,6 +29,7 @@
                 onkeydown={handleQueryKeydown}
                 onkeyup={handleCaretMove}
                 onclick={handleQueryClick}
+                onfocus={handleQueryFocus}
                 onblur={handleQueryBlur}
                 onscroll={handleQueryScroll}
                 disabled={disabled}
@@ -38,13 +39,8 @@
                 aria-describedby="query-help"></textarea>
             <div class="query-mirror" aria-hidden="true" lwc:dom="manual"></div>
             <template if:true={showSuggestions}>
-                <div
-                    id="query-suggestions"
-                    class="slds-dropdown slds-dropdown_left slds-dropdown_length-7 query-suggestions"
-                    style={suggestionStyle}
-                    role="listbox"
-                    aria-label="Query suggestions">
-                    <ul class="slds-listbox slds-listbox_vertical" role="presentation">
+                <div class="slds-dropdown slds-dropdown_left slds-dropdown_length-7 query-suggestions" style={suggestionStyle}>
+                    <ul id="query-suggestions" class="slds-listbox slds-listbox_vertical" role="listbox" aria-label="Query suggestions">
                         <template for:each={suggestionOptions} for:item="option">
                             <li key={option.id} role="presentation" class="slds-listbox__item">
                                 <div
@@ -53,6 +49,7 @@
                                     role="option"
                                     aria-selected={option.ariaSelected}
                                     data-index={option.index}
+                                    onmousemove={handleOptionMouseMove}
                                     onmousedown={handleOptionMouseDown}>
                                     <span class="slds-media__body">
                                         <span class="slds-listbox__option-text slds-listbox__option-text_entity query-option-value">{option.label}</span>
@@ -65,13 +62,25 @@
                     <template if:true={suggestionMessage}>
                         <p class="slds-p-horizontal_small slds-p-vertical_x-small slds-text-color_weak query-suggestion-message">{suggestionMessage}</p>
                     </template>
+                    <template if:true={canRetry}>
+                        <button
+                            class="slds-button slds-button_neutral slds-m-around_x-small"
+                            type="button"
+                            data-query-retry="true"
+                            onmousedown={handleRetryMouseDown}
+                            onclick={handleRetry}
+                            onblur={handleRetryBlur}>
+                            Retry
+                        </button>
+                    </template>
                 </div>
             </template>
             <span class="slds-assistive-text" aria-live="polite">{suggestionStatus}</span>
         </div>
         <div class="slds-form-element__help slds-text-color_weak" id="query-help">
-            One query that returns records, not totals. It runs with the run user's access, and the model gets at most 200 records. Enter or Tab inserts a
-            suggestion, Shift+Enter starts a new line, and Esc closes the list.
+            One query that returns records, not totals. It runs with the run user's access, and the model gets at most 200 records. Use the arrow keys or the
+            mouse to select a suggestion. Enter inserts the selected suggestion, or starts a new line when none is selected. Tab inserts the selected
+            suggestion, or the first one. Shift+Enter always starts a new line. Esc closes the list. Ctrl+Space opens it or retries a failed request.
         </div>
     </div>
 </template>

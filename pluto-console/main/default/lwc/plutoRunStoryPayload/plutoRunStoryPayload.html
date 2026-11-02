@@ -29,9 +29,16 @@
             <p class="payload-copy-error" role="status">{copyText}</p>
         </template>
         <template lwc:if={hasValue}>
-            <pre
-                class="json"
-                tabindex="0"><template for:each={highlighted.tokens} for:item="token"><span key={token.key} class={token.cls}>{token.value}</span></template></pre>
+            <template lwc:if={highlighted.isJson}>
+                <pre
+                    class="json"
+                    tabindex="0"><template for:each={highlighted.tokens} for:item="token"><span key={token.key} class={token.cls}>{token.value}</span></template></pre>
+            </template>
+            <template lwc:else>
+                <div class="payload-text" tabindex="0">
+                    <c-markdown-viewer value={value}></c-markdown-viewer>
+                </div>
+            </template>
         </template>
         <template lwc:else>
             <p class="payload-empty">{emptyText}</p>

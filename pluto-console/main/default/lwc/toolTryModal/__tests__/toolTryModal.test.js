@@ -72,7 +72,7 @@ describe('c-tool-try-modal', () => {
 
         // The dry-run tagline is slotted into the header, which the Jest stub does not render.
         expect($(element, 'lightning-modal-header').label).toBe('Try create_case');
-        expect($(element, '[data-approval-note]').textContent).toContain('skips it');
+        expect($(element, '[data-approval-note]').textContent).toContain('skips approval');
         expect($(element, '.form-section__heading').textContent).toBe('recordData');
         const subject = $(element, '[data-path="recordData.Subject"]');
         expect(subject.label).toBe('Subject');
@@ -234,5 +234,25 @@ describe('c-tool-try-modal', () => {
         expect(tryTool).toHaveBeenCalledWith({ toolId: TOOL_ID, input: '{"recordData":{"Subject":"Broken printer"}}', recordId: null });
         expect($(element, '[data-run-as]')).toBeNull();
         expect($(element, '[data-result]').textContent).toContain('Ran as Ada Admin');
+    });
+
+    it('warns what the execution user cannot read, before and after the dry run, without blocking it', async () => {
+        const access =
+            "The agent's execution user (Agent Service) cannot read Account.AccountNumber. Give that user access in a permission set, or leave those fields out of the tool.";
+        const element = await open({ executionUserAccess: access });
+        expect($(element, '[data-execution-access]').textContent).toContain('cannot read Account.AccountNumber');
+        expect($(element, '[data-execution-access]').textContent).toContain('runs as you');
+        expect(runButton(element).label).toBe('Run');
+
+        tryTool.mockRejectedValue(serverAnswer({ success: true, output: 'done', durationMs: 9, undoneRecordChanges: 0, notUndone: [] }));
+        type(element, 'recordData.Subject', 'Broken printer');
+        runButton(element).click();
+        await flush();
+        expect($(element, '[data-result] [data-execution-access]').textContent).toContain('Account.AccountNumber');
+    });
+
+    it('shows no access warning when the execution user has what the tool needs', async () => {
+        const element = await open({ executionUserAccess: null });
+        expect($(element, '[data-execution-access]')).toBeNull();
     });
 });

@@ -160,7 +160,7 @@ private class AttendedAccessTest {
         Account target = new Account(Name = 'Before');
         insert target;
         AgentKernelModels.ToolRequest request = new AgentKernelModels.ToolRequest();
-        request.implementationConfiguration = '{"flowApiName":"StandardToolTestEchoFlow","allowSystemContext":true}';
+        request.implementationConfiguration = '{"flowApiName":"StandardToolTestEchoFlow"}';
         request.input = JSON.serialize(new Map<String, Object>{ 'echoInput' => String.valueOf(target.Id) });
         request.principal = new AgentKernelModels.ExecutionPrincipal(
             requester.Id,

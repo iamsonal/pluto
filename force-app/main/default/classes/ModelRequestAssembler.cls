@@ -60,7 +60,7 @@ public without sharing class ModelRequestAssembler {
         Result result = new Result();
         List<AgentKernelModels.ToolDefinition> toolDefinitions;
         try {
-            toolDefinitions = neutralTools(tools, definition);
+            toolDefinitions = neutralTools(tools);
         } catch (ToolSchemaUnavailableException unavailable) {
             return fail(result, 'TOOL_SCHEMA_UNAVAILABLE', unavailable.getMessage());
         }
@@ -481,10 +481,8 @@ public without sharing class ModelRequestAssembler {
         }
     }
 
-    private static List<AgentKernelModels.ToolDefinition> neutralTools(List<AgentTool__c> records, AgentDefinition__c definition) {
+    private static List<AgentKernelModels.ToolDefinition> neutralTools(List<AgentTool__c> records) {
         List<AgentKernelModels.ToolDefinition> result = new List<AgentKernelModels.ToolDefinition>();
-        // A policy may ask for approval of any call, and the schema is sent before Core knows which.
-        Boolean policyMayAskApproval = definition != null && !String.isBlank(definition.ToolAuthorizationPolicyClass__c);
         for (AgentTool__c record : records) {
             AgentKernelModels.ToolDefinition item = new AgentKernelModels.ToolDefinition();
             item.developerName = record.DeveloperName__c;
@@ -495,41 +493,44 @@ public without sharing class ModelRequestAssembler {
                     'Tool ' + record.DeveloperName__c + ' cannot build its inputs: ' + schema.problem + ' Fix the tool, then retry the run.'
                 );
             }
-            item.inputSchema = asksRationale(record, policyMayAskApproval) ? withRationale(schema.schema, record.RequiresApproval__c == true) : schema.schema;
-            item.requiresApproval = record.RequiresApproval__c;
+            item.inputSchema = withRationale(schema.schema, rationalePrompt(record));
+            item.requiresApproval = AgentApprovalService.mode(record) == AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
             result.add(item);
         }
         return result;
     }
 
     /**
-     * The model explains the calls a person may review: tools that require
-     * approval, tools whose effects leave this org (an operator may reconcile
-     * them), and every tool of an agent whose policy may ask for approval.
-     * Read-only calls are not asked.
+     * The model explains every call, so a person reading the run can see why
+     * each one happened. A call that can wait for approval (Always Required or
+     * Decided by Policy) gets the approver's text. A policy decides per call
+     * after the schema is sent, so a Decided by Policy tool is asked as if it
+     * will wait. Every other call gets one short sentence.
      */
     @TestVisible
     private static final String APPROVER_RATIONALE =
-        'Shown to the person who must approve this action. In two or three short sentences: what will change (current value to new value), ' +
-        'the facts from records or the request that justify it, and anything uncertain the approver should check. Do not claim anything is approved.';
+        'Shown to the person who must approve this action. In two or three short sentences: what this call will do and to which record ' +
+        '(for an update, the current and new value), the facts from records or the request that support it, and every condition the action ' +
+        'depends on that you did not confirm with a tool. If you confirmed every condition, say so. ' +
+        'If this call only reads, write one sentence on what you need to learn and why, and nothing else. Do not mention approval.';
     @TestVisible
-    private static final String REVIEWER_RATIONALE =
-        'Shown to a person who may review this action. In one or two short sentences: the facts from records or the request that make it needed now. ' +
-        'Do not repeat the inputs or claim anything is approved.';
+    private static final String RUN_RATIONALE =
+        'Shown to a person reviewing this run. In one short sentence: what this call does and the facts from records or the request that make it needed now. ' +
+        'Do not repeat the inputs or mention approval.';
 
+    /** The rationale description this tool is asked for. */
     @TestVisible
-    private static Boolean asksRationale(AgentTool__c tool, Boolean policyMayAskApproval) {
-        return policyMayAskApproval || tool.RequiresApproval__c == true || AgentToolTypeService.mayChangeOutside(tool);
+    private static String rationalePrompt(AgentTool__c tool) {
+        return AgentApprovalService.mode(tool) == AgentKernelModels.APPROVAL_NOT_REQUIRED ? RUN_RATIONALE : APPROVER_RATIONALE;
     }
 
     /**
      * Adds the required rationale property first, so the model states why before
      * it writes the arguments. Tool schemas are closed objects (checked at save),
-     * and a tool may not declare the property itself. An approver decides from
-     * this text, so an approval tool asks for the change and what to check.
+     * and a tool may not declare the property itself.
      */
     @TestVisible
-    private static String withRationale(String inputSchema, Boolean forApprover) {
+    private static String withRationale(String inputSchema, String description) {
         Object parsed = String.isBlank(inputSchema) ? null : JSON.deserializeUntyped(inputSchema);
         if (!(parsed instanceof Map<String, Object>) || ((Map<String, Object>) parsed).get('type') != 'object') {
             return inputSchema;
@@ -558,7 +559,7 @@ public without sharing class ModelRequestAssembler {
         generator.writeFieldName(AgentKernelModels.TOOL_RATIONALE_PROPERTY);
         generator.writeStartObject();
         generator.writeStringField('type', 'string');
-        generator.writeStringField('description', forApprover ? APPROVER_RATIONALE : REVIEWER_RATIONALE);
+        generator.writeStringField('description', description);
         generator.writeEndObject();
         for (String name : declared.keySet()) {
             generator.writeObjectField(name, declared.get(name));

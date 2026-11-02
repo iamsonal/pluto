@@ -33,7 +33,7 @@ private class StandardRunFlowToolTest {
     @IsTest
     static void runsEchoFlowAndReturnsOutputs() {
         AgentKernelModels.ToolResponse response = new StandardRunFlowTool()
-            .execute(request('{"flowApiName":"' + ECHO_FLOW + '","allowSystemContext":true}', '{"echoInput":"hello"}'));
+            .execute(request('{"flowApiName":"' + ECHO_FLOW + '"}', '{"echoInput":"hello"}'));
 
         System.assertEquals(true, response.isSuccess);
         Map<String, Object> output = (Map<String, Object>) JSON.deserializeUntyped(response.output);
@@ -44,7 +44,7 @@ private class StandardRunFlowToolTest {
     static void returnsRecordOutputsAsStructuredRecordSets() {
         AgentKernelModels.ToolResponse response = new StandardRunFlowTool()
             .execute(
-                request('{"flowApiName":"StandardToolTestRecordFlow","allowSystemContext":true}', '{"nameInput":"Acme","descriptionInput":"Classified note"}')
+                request('{"flowApiName":"StandardToolTestRecordFlow"}', '{"nameInput":"Acme","descriptionInput":"Classified note"}')
             );
 
         System.assertEquals(true, response.isSuccess);
@@ -90,27 +90,33 @@ private class StandardRunFlowToolTest {
     static void rejectsMissingConfiguration() {
         assertPermanent(null, '{}', 'implementation configuration');
         assertPermanent('{}', '{}', 'flowApiName');
-        assertPermanent('{"flowApiName":"Has Spaces","allowSystemContext":true}', '{}', 'valid autolaunched flow API name');
+        assertPermanent('{"flowApiName":"Has Spaces"}', '{}', 'valid autolaunched flow API name');
     }
 
     @IsTest
-    static void defaultModeFlowStillNeedsTheSystemAccessAcknowledgement() {
-        // Started from Apex, a Default Mode flow runs with system object and field access.
-        assertPermanent('{"flowApiName":"' + ECHO_FLOW + '"}', '{"echoInput":"hello"}', 'allowSystemContext');
+    static void runsWithoutAnAcknowledgementAndIgnoresTheOldKey() {
         System.assert(
-            !new StandardRunFlowTool().validateConfiguration(configuration('{"flowApiName":"' + ECHO_FLOW + '"}')).isEmpty(),
-            'Saving the tool without the acknowledgement must fail.'
+            new StandardRunFlowTool().validateConfiguration(configuration('{"flowApiName":"' + ECHO_FLOW + '"}')).isEmpty(),
+            'A Flow tool saves with only its Flow.'
         );
+        for (AgentKernelModels.ToolSetting setting : new StandardRunFlowTool().describe(configuration('{"flowApiName":"' + ECHO_FLOW + '"}')).settings) {
+            System.assertNotEquals('allowSystemContext', setting.name, 'The tool no longer asks for a confirmation that changes nothing.');
+        }
+        // Tools saved by earlier builds still carry the key, and keep working.
+        for (String stored : new List<String>{ '{"flowApiName":"' + ECHO_FLOW + '","allowSystemContext":true}', '{"flowApiName":"' + ECHO_FLOW + '","allowSystemContext":false}' }) {
+            AgentKernelModels.ToolResponse response = new StandardRunFlowTool().execute(request(stored, '{"echoInput":"hello"}'));
+            System.assert(response.output.contains('hello'), response.output);
+        }
     }
 
     @IsTest
     static void rejectsUnknownFlow() {
-        assertPermanent('{"flowApiName":"No_Such_Flow_Anywhere","allowSystemContext":true}', '{}', 'was not found');
+        assertPermanent('{"flowApiName":"No_Such_Flow_Anywhere"}', '{}', 'was not found');
     }
 
     @IsTest
     static void rejectsNonObjectInput() {
-        assertPermanent('{"flowApiName":"' + ECHO_FLOW + '","allowSystemContext":true}', 'not-json', 'must be a JSON object');
+        assertPermanent('{"flowApiName":"' + ECHO_FLOW + '"}', 'not-json', 'must be a JSON object');
     }
 
     private static void assertPermanent(String config, String input, String expectedFragment) {

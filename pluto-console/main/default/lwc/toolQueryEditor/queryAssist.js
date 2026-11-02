@@ -38,6 +38,7 @@ const TOKEN = /'[^']*'?|<=|>=|!=|<>|[=<>(),]|:[A-Za-z_][A-Za-z0-9_]*|[A-Za-z0-9_
 function maskStrings(query, caret) {
     let masked = '';
     let quoteStart = null;
+    let quoteEnd = null;
     let index = 0;
     while (index < query.length) {
         if (query[index] !== "'") {
@@ -60,9 +61,10 @@ function maskStrings(query, caret) {
         }
         if (start < caret && (!closed || caret < index)) {
             quoteStart = start;
+            quoteEnd = index;
         }
     }
-    return { masked, quoteStart };
+    return { masked, quoteStart, quoteEnd };
 }
 
 function tokenize(text) {
@@ -130,11 +132,52 @@ function scopeClose(masked, start) {
 function fromName(masked, start) {
     const tokens = collapseGroups(tokenize(masked.slice(start, scopeClose(masked, start))));
     for (let index = 0; index < tokens.length - 1; index++) {
-        if (tokens[index].upper === 'FROM' && tokens[index + 1].kind === 'word') {
+        if (tokens[index].upper === 'FROM' && tokens[index + 1].kind === 'word' && !RESERVED.has(tokens[index + 1].upper)) {
             return tokens[index + 1].text;
         }
     }
     return null;
+}
+
+/**
+ * Closes each subquery whose ) is not typed yet, so the query around it
+ * still reads right. A subquery being added to SELECT Name FROM Account
+ * ends before the outer FROM. With two FROMs after it, that is the second.
+ * With one, it is that FROM when it comes after the caret, because the
+ * subquery's own FROM is not written yet. The ) replaces the space before
+ * that FROM, so every position stays the same.
+ */
+function closeOpenSubqueries(masked, caret) {
+    const unclosed = [];
+    for (let index = 0; index < masked.length; index++) {
+        if (masked[index] === '(') {
+            unclosed.push(index);
+        } else if (masked[index] === ')') {
+            unclosed.pop();
+        }
+    }
+    let closed = masked;
+    for (const open of unclosed.reverse()) {
+        if (!/^\s*SELECT\b/i.test(closed.slice(open + 1))) {
+            continue;
+        }
+        const froms = [];
+        let depth = 0;
+        for (let index = open + 1; index < closed.length; index++) {
+            if (closed[index] === '(') {
+                depth++;
+            } else if (closed[index] === ')') {
+                depth--;
+            } else if (depth === 0 && /\s/.test(closed[index - 1]) && /^FROM\b/i.test(closed.slice(index, index + 5))) {
+                froms.push(index);
+            }
+        }
+        const end = froms.length > 1 ? froms[1] : froms[0] > caret ? froms[0] : undefined;
+        if (end !== undefined) {
+            closed = closed.slice(0, end - 1) + ')' + closed.slice(end);
+        }
+    }
+    return closed;
 }
 
 /**
@@ -163,17 +206,23 @@ function scopesAt(masked, end) {
 }
 
 /** Reads what is being typed at the caret and where it sits in the query. */
-export function readQueryContext(query, caret) {
+export function readQueryContext(query, caret, selectionEnd = caret) {
     const text = query || '';
     const at = Math.max(0, Math.min(caret == null ? text.length : caret, text.length));
-    const { masked, quoteStart } = maskStrings(text, at);
+    const selectedTo = Math.max(at, Math.min(selectionEnd == null ? at : selectionEnd, text.length));
+    const strings = maskStrings(text, at);
+    const { quoteStart, quoteEnd } = strings;
+    const masked = closeOpenSubqueries(strings.masked, at);
     let end;
     let term;
     let path = [];
     let bind = false;
     if (quoteStart != null) {
         end = quoteStart;
-        term = text.slice(quoteStart + 1, at);
+        term = text.slice(quoteStart + 1, at).replace(/\\(['\\])/g, '$1');
+    } else if (/[!<>=]$/.test(masked.slice(0, at))) {
+        term = /[!<>=]+$/.exec(masked.slice(0, at))[0];
+        end = at - term.length;
     } else {
         const word = /(?:[A-Za-z0-9_]+\.)*[A-Za-z0-9_]*$/.exec(masked.slice(0, at))[0];
         path = word.split('.');
@@ -196,17 +245,21 @@ export function readQueryContext(query, caret) {
         base--;
     }
     return {
+        query: text,
+        caret: at,
+        selectionEnd: selectedTo,
         term,
         path,
         bind,
         inQuote: quoteStart != null,
-        replaceFrom: at - term.length,
-        replaceTo: at,
+        replaceFrom: quoteStart == null ? at - term.length : quoteStart + 1,
+        replaceTo: Math.max(selectedTo, quoteEnd ?? at + (/^[!<>=]+$/.test(term) ? /^[!<>=]*/ : /^[A-Za-z0-9_]*/).exec(text.slice(at))[0].length),
         tokens,
         clause: lastClause(tokens),
         objectName: scopes[base].from,
         childPath: scopes.slice(base + 1).map((child) => child.from),
-        inChildQuery: scope.isChild
+        inChildQuery: scope.isChild,
+        inFilterQuery: scopes.length > 1 && !scope.isChild
     };
 }
 
@@ -217,7 +270,8 @@ function comparisonAt(tokens) {
     if (index < 0) {
         return null;
     }
-    if (tokens[index].kind === ',' || tokens[index].kind === '(') {
+    const listStart = tokens[index].kind === '(';
+    if (tokens[index].kind === ',' || listStart) {
         while (index >= 0 && tokens[index].kind !== '(') {
             index--;
         }
@@ -241,7 +295,7 @@ function comparisonAt(tokens) {
     if (!field || field.kind !== 'word' || RESERVED.has(field.upper)) {
         return null;
     }
-    return { field: field.text, operator, inList };
+    return { field: field.text, operator, inList, listStart: inList && listStart };
 }
 
 /** What kind of text belongs at the caret. */
@@ -251,7 +305,14 @@ function placeOf(context) {
     const before = tokens[tokens.length - 2];
     const count = COUNT_BINDS[context.clause];
     if (count && previous.upper === context.clause && !context.inQuote) {
-        return { kind: 'keyword', words: [count] };
+        if (!context.inChildQuery) {
+            return { kind: 'keyword', words: [count] };
+        }
+        // Salesforce refuses OFFSET in most child subqueries. A LIMIT gets its own input, so it does not share the outer query's.
+        const relationship = context.childPath[context.childPath.length - 1];
+        return context.clause === 'LIMIT'
+            ? { kind: 'keyword', words: [':' + bindNameFor('max_' + (relationship || 'childRecords'), false)] }
+            : { kind: 'none' };
     }
     if (context.inQuote || context.bind) {
         const comparison = context.clause === 'WHERE' ? comparisonAt(tokens) : null;
@@ -264,7 +325,10 @@ function placeOf(context) {
             if (previous.upper === 'SELECT' || previous.kind === ',') {
                 return { kind: 'field' };
             }
-            return previous.kind === 'word' ? { kind: 'keyword', words: ['FROM'] } : { kind: 'none' };
+            if (previous.kind === '(' && before && (before.upper === 'SELECT' || before.kind === ',')) {
+                return { kind: 'keyword', words: ['SELECT'] };
+            }
+            return previous.kind === 'word' || previous.kind === 'group' ? { kind: 'keyword', words: ['FROM'] } : { kind: 'none' };
         case 'FROM':
             if (previous.upper === 'FROM') {
                 return { kind: 'object' };
@@ -283,7 +347,7 @@ function placeOf(context) {
             if (['string', 'bind', 'group'].includes(previous.kind) || comparisonAt(tokens.slice(0, -1))) {
                 return { kind: 'keyword', words: ['AND', 'OR', 'ORDER BY', 'LIMIT'] };
             }
-            return previous.kind === 'word' && !RESERVED.has(previous.upper) ? { kind: 'keyword', words: OPERATORS } : { kind: 'none' };
+            return previous.kind === 'word' && !RESERVED.has(previous.upper) ? { kind: 'operator', field: previous.text } : { kind: 'none' };
         }
         case 'ORDER':
             if (previous.upper === 'ORDER') {
@@ -303,7 +367,7 @@ function placeOf(context) {
             }
             return { kind: 'keyword', words: ['ASC', 'DESC', 'NULLS FIRST', 'NULLS LAST', 'LIMIT'] };
         case 'LIMIT':
-            return { kind: 'keyword', words: ['OFFSET'] };
+            return context.inChildQuery ? { kind: 'none' } : { kind: 'keyword', words: ['OFFSET'] };
         default:
             return { kind: 'none' };
     }
@@ -347,10 +411,19 @@ export function bindNameFor(fieldPath, isList) {
     return /[^aeiou]y$/i.test(name) ? name.slice(0, -1) + 'ies' : name + 's';
 }
 
-function fieldItems(fields) {
+/** The fields that fit the clause. The SELECT of a WHERE subquery takes one Id or lookup field, so only those are offered there. */
+function fieldItems(fields, clause, idsOnly) {
     const items = [];
     for (const field of [...fields].sort((left, right) => left.value.localeCompare(right.value))) {
-        items.push({ value: field.value, label: field.value, detail: `${field.label} • ${field.dataType}` });
+        if (idsOnly) {
+            if (field.dataType === 'ID' || field.dataType === 'REFERENCE') {
+                items.push({ value: field.value, label: field.value, detail: `${field.label} • ${field.dataType}` });
+            }
+            continue;
+        }
+        if ((clause !== 'WHERE' || field.filterable !== false) && (clause !== 'ORDER' || field.sortable !== false)) {
+            items.push({ value: field.value, label: field.value, detail: `${field.label} • ${field.dataType}` });
+        }
         if (field.relationshipName) {
             items.push({ value: field.relationshipName + '.', label: field.relationshipName + '.', detail: `${field.referenceTo} fields` });
         }
@@ -362,10 +435,14 @@ function valueItems(place, field, context) {
     const isList = LIST_OPERATORS.has(place.operator);
     const picklist = field && field.isPicklist ? field.picklistValues || [] : [];
     if (context.inQuote) {
-        return picklist.map((choice) => ({ value: choice.value + "'", label: choice.value, detail: choice.label }));
+        return picklist.map((choice) => ({ value: quoted(choice.value).slice(1), label: choice.value, detail: choice.label }));
     }
     if (place.inList) {
-        return picklist.map((choice) => ({ value: quoted(choice.value), label: quoted(choice.value), detail: choice.label }));
+        const items = picklist.map((choice) => ({ value: quoted(choice.value), label: quoted(choice.value), detail: choice.label }));
+        if (place.listStart && !context.bind && field && (field.dataType === 'ID' || field.dataType === 'REFERENCE')) {
+            items.unshift({ value: 'SELECT', label: 'SELECT', detail: 'Records found by a subquery' });
+        }
+        return items;
     }
     const items = [];
     const type = field ? field.dataType : null;
@@ -399,6 +476,30 @@ function valueItems(place, field, context) {
 
 function quoted(value) {
     return "'" + String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+}
+
+function operatorsFor(field) {
+    if (!field || field.filterable === false) {
+        return [];
+    }
+    switch (field.dataType) {
+        case 'BOOLEAN':
+            return ['=', '!='];
+        case 'MULTIPICKLIST':
+            return ['=', '!=', 'INCLUDES', 'EXCLUDES'];
+        case 'ID':
+        case 'REFERENCE':
+        case 'PICKLIST':
+            return ['=', '!=', 'IN', 'NOT IN'];
+        case 'STRING':
+        case 'TEXTAREA':
+        case 'EMAIL':
+        case 'PHONE':
+        case 'URL':
+            return OPERATORS;
+        default:
+            return OPERATORS.filter((operator) => operator !== 'LIKE');
+    }
 }
 
 /** Keeps items that match the typed text: exact first, then by prefix, then anywhere, each in their original order. */
@@ -465,17 +566,27 @@ export function suggest(context, fieldsOf, childrenOf = () => []) {
     }
     const place = placeOf(context);
     if (place.kind === 'keyword') {
-        const items = place.words.map((word) => ({ value: word, label: word, detail: '' }));
+        const items = place.words.map((word) => ({
+            value: word,
+            label: word,
+            detail: '',
+            ...(word === 'SELECT' && /^\s*[A-Za-z]*\s*$/.test(context.query) ? { insertValue: 'SELECT Id FROM ' } : {})
+        }));
         return { items: rankSuggestions(items, context.term) };
     }
     if (place.kind === 'object' && !context.inChildQuery) {
-        return context.term.length >= MIN_OBJECT_TERM ? { searchObjects: context.term, items: [] } : { items: [] };
+        return !context.term || context.term.length >= MIN_OBJECT_TERM ? { searchObjects: context.term, items: [] } : { items: [] };
     }
     if (place.kind === 'none') {
         return { items: [], message: place.message };
     }
     if (!context.objectName) {
-        return { items: [], message: 'Write FROM and an object to see its fields.' };
+        return {
+            items: [],
+            message: context.childPath.length
+                ? 'Write FROM and an object for the main query first. Its child relationships fill this subquery.'
+                : 'Write FROM and an object to see its fields.'
+        };
     }
     if (place.kind === 'object') {
         const parent = objectThroughChildren(context.objectName, context.childPath.slice(0, -1), childrenOf);
@@ -503,13 +614,15 @@ export function suggest(context, fieldsOf, childrenOf = () => []) {
             return { needsObject: found.needsObject, items: [] };
         }
         if (found.missing) {
-            return { items: [] };
+            return { items: [], message: `Pluto cannot find the relationship ${context.path.join('.')}, or you cannot read it.` };
         }
         const fields = fieldsOf(found.objectName);
         if (!fields.length) {
             return { items: [], message: `Pluto cannot find the object ${found.objectName}, or you cannot read it.` };
         }
-        return { items: rankSuggestions(fieldItems(fields), context.term) };
+        const idsOnly = context.inFilterQuery && context.clause === 'SELECT';
+        const items = rankSuggestions(fieldItems(fields, context.clause, idsOnly), context.term);
+        return { items, message: items.length ? '' : 'No matching readable fields for this clause.' };
     }
     const segments = place.field.split('.');
     const fieldName = segments.pop().toLowerCase();
@@ -518,5 +631,9 @@ export function suggest(context, fieldsOf, childrenOf = () => []) {
         return { needsObject: found.needsObject, items: [] };
     }
     const field = found.objectName ? fieldsOf(found.objectName).find((candidate) => candidate.value.toLowerCase() === fieldName) : null;
+    if (place.kind === 'operator') {
+        const items = operatorsFor(field).map((word) => ({ value: word, label: word, detail: '' }));
+        return { items: rankSuggestions(items, context.term) };
+    }
     return { items: rankSuggestions(valueItems(place, field || null, context), context.term) };
 }

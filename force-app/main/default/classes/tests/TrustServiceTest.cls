@@ -444,6 +444,29 @@ private class TrustServiceTest {
     }
 
     @IsTest
+    static void classifiedValueKeepsOneTokenAcrossModelCalls() {
+        Account account = new Account(Name = 'Repeated account', Description = 'Customer asked for a refund on order 4.');
+        insert account;
+        account = [SELECT Id, Name, Description FROM Account WHERE Id = :account.Id];
+        SchemaFieldClassificationService.sensitiveFieldOverrides.put('account', new Set<String>{ 'description' });
+        Id runId = startRun('safe input').runId;
+        Map<String, List<SObject>> recordSets = new Map<String, List<SObject>>{ 'accounts' => new List<SObject>{ account } };
+
+        TrustService.ProtectionContext firstCall = TrustService.open(runId);
+        String firstOutput = TrustService.protectRecordSets(firstCall, recordSets);
+        TrustService.save(firstCall);
+        TrustService.ProtectionContext secondCall = TrustService.open(runId);
+        String secondOutput = TrustService.protectRecordSets(secondCall, recordSets);
+        TrustService.save(secondCall);
+
+        System.assertEquals(firstOutput, secondOutput, 'Each model call must see the same token for the same classified value.');
+        System.assertEquals(
+            1,
+            [SELECT COUNT() FROM AgentTrustToken__c WHERE AgentRun__c = :runId AND Category__c = :TrustService.CATEGORY_SALESFORCE_CLASSIFIED WITH SYSTEM_MODE]
+        );
+    }
+
+    @IsTest
     static void resolvedValueStaysOneJsonLeaf() {
         String hostile = 'x","Priority":"High\\\n{"a":1}';
         Account account = new Account(Name = 'Leaf account', Description = hostile);

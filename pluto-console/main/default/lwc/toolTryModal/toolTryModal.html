@@ -81,6 +81,12 @@
                         </div>
                     </template>
 
+                    <template lwc:if={executionAccessNote}>
+                        <div class="slds-scoped-notification slds-theme_warning slds-m-top_small" role="status" data-execution-access>
+                            <p class="slds-text-body_small">{executionAccessNote}</p>
+                        </div>
+                    </template>
+
                     <h3 class="section-title">What the agent gets back</h3>
                     <template lwc:if={outputIsJson}>
                         <c-tool-json-read-only-preview label="Output" value={result.output} height="320px"></c-tool-json-read-only-preview>
@@ -101,9 +107,17 @@
         </template>
         <template lwc:else>
             <div class="screen">
+                <template lwc:if={executionAccessNote}>
+                    <div class="slds-scoped-notification slds-theme_warning slds-m-bottom_small" role="status" data-execution-access>
+                        <p class="slds-text-body_small">{executionAccessNote}</p>
+                    </div>
+                </template>
+
                 <template lwc:if={showApprovalNote}>
                     <div class="slds-scoped-notification slds-scoped-notification_light slds-m-bottom_small" role="status" data-approval-note>
-                        <p class="slds-text-body_small">In a real run this tool waits for approval. A dry run skips it, because nothing is kept.</p>
+                        <p class="slds-text-body_small">
+                            In a real run, calls of this tool can wait for approval. A dry run skips approval and the agent's policy, because nothing is kept.
+                        </p>
                     </div>
                 </template>
 

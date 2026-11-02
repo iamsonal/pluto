@@ -4,7 +4,7 @@ import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import remarkBaseLinks from './src/plugins/remark-base-links.mjs';
 
-const repo = 'https://github.com/iamsonal/aiAgentStudio';
+const repo = 'https://github.com/iamsonal/pluto';
 const basePath = (process.env.DOCS_BASE_PATH || '/').replace(/(.)\/$/, '$1');
 
 export default defineConfig({
@@ -36,7 +36,6 @@ export default defineConfig({
             head: [{ tag: 'link', attrs: { rel: 'icon', href: `${basePath === '/' ? '' : basePath}/favicon.png`, sizes: '32x32' } }],
             logo: { src: './src/assets/logo.svg', alt: 'Pluto' },
             social: [{ icon: 'github', label: 'GitHub', href: repo }],
-            editLink: { baseUrl: `${repo}/edit/main/docs-starlight/` },
             lastUpdated: true,
             customCss: ['@fontsource-variable/jetbrains-mono', './src/styles/custom.css'],
             components: { Footer: './src/components/Footer.astro' },

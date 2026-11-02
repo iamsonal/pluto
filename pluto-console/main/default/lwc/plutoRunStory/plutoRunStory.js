@@ -348,6 +348,11 @@ export default class PlutoRunStory extends NavigationMixin(LightningElement) {
         return this.story.outcome?.headline || '';
     }
 
+    /** True when the headline is the whole answer and should be rendered as Markdown. */
+    get headlineMarkdown() {
+        return Boolean(this.story.outcome?.headlineMarkdown);
+    }
+
     get statusClass() {
         return `status status_${this.header.tone}`;
     }

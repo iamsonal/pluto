@@ -52,19 +52,25 @@ private class ToolExecutionUserAccessTest {
         );
     }
 
-    @IsTest
-    static void savingAToolTheExecutionUserCannotUseFailsWithWhatIsMissing() {
-        AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
-        User principal = executionUser();
-        AgentKernelTestFactory.useDelegatedPrincipal(definition, principal.Id);
+    /** Saves the tool and returns what its agent's execution user lacks for it. */
+    private static String savedProblem(AgentTool__c tool) {
+        Database.SaveResult saved = Database.insert(tool, false);
+        System.assert(saved.isSuccess(), 'Saving never depends on the execution user\'s access: ' + JSON.serialize(saved.getErrors()));
+        return ToolExecutionUserAccess.problem(
+            tool,
+            ToolExecutionUserAccess.executionUsers(new Set<Id>{ tool.AgentDefinition__c }).get(tool.AgentDefinition__c)
+        );
+    }
 
-        Database.SaveResult saved = Database.insert(
-            recordTool(definition.Id, 'QueryRecords', '{"query":"SELECT Name, Industry, Description FROM Account WHERE Id = :anchorId LIMIT 1"}'),
-            false
+    @IsTest
+    static void aToolTheExecutionUserCannotUseSavesAndTheCheckNamesWhatIsMissing() {
+        AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
+        AgentKernelTestFactory.useDelegatedPrincipal(definition, executionUser().Id);
+
+        String message = savedProblem(
+            recordTool(definition.Id, 'QueryRecords', '{"query":"SELECT Name, Industry, Description FROM Account WHERE Id = :anchorId LIMIT 1"}')
         );
 
-        System.assertEquals(false, saved.isSuccess(), 'The execution user cannot read Account.Description.');
-        String message = saved.getErrors()[0].getMessage();
         System.assert(message.contains('Execution Access User'), message);
         System.assert(message.contains('read Account.Description'), message);
         System.assert(!message.contains('Account.Industry'), 'Fields the user can read are not listed: ' + message);
@@ -75,30 +81,28 @@ private class ToolExecutionUserAccessTest {
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         AgentKernelTestFactory.useDelegatedPrincipal(definition, executionUser().Id);
 
-        Database.SaveResult saved = Database.insert(
+        String message = savedProblem(
             recordTool(
                 definition.Id,
                 'QueryRecords',
                 '{"query":"SELECT Name, Parent.AnnualRevenue FROM Account WHERE Rating = :rating ORDER BY NumberOfEmployees LIMIT 5"}'
-            ),
-            false
+            )
         );
 
-        System.assertEquals(false, saved.isSuccess());
-        String message = saved.getErrors()[0].getMessage();
         System.assert(message.contains('Account.AnnualRevenue'), 'A parent field is checked on its own object: ' + message);
         System.assert(message.contains('Account.Rating'), 'A bind field is checked: ' + message);
         System.assert(message.contains('Account.NumberOfEmployees'), 'A sort field is checked: ' + message);
     }
 
     @IsTest
-    static void aToolTheExecutionUserCanUseSaves() {
+    static void aToolTheExecutionUserCanUseHasNoProblem() {
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         AgentKernelTestFactory.useDelegatedPrincipal(definition, executionUser().Id);
 
-        insert recordTool(definition.Id, 'QueryRecords', '{"query":"SELECT Name, Industry FROM Account WHERE Id = :anchorId LIMIT 1"}');
-
-        System.assertEquals(1, [SELECT COUNT() FROM AgentTool__c WHERE AgentDefinition__c = :definition.Id]);
+        System.assertEquals(
+            null,
+            savedProblem(recordTool(definition.Id, 'QueryRecords', '{"query":"SELECT Name, Industry FROM Account WHERE Id = :anchorId LIMIT 1"}'))
+        );
     }
 
     @IsTest
@@ -106,13 +110,9 @@ private class ToolExecutionUserAccessTest {
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         AgentKernelTestFactory.useDelegatedPrincipal(definition, executionUser().Id);
 
-        Database.SaveResult saved = Database.insert(
-            recordTool(definition.Id, 'UpdateRecord', '{"objectApiName":"Account","fields":["Industry"],"anchorRecordOnly":true}'),
-            false
-        );
+        String message = savedProblem(recordTool(definition.Id, 'UpdateRecord', '{"objectApiName":"Account","fields":["Industry"],"anchorRecordOnly":true}'));
 
-        System.assertEquals(false, saved.isSuccess());
-        System.assert(saved.getErrors()[0].getMessage().contains('cannot edit Account'), saved.getErrors()[0].getMessage());
+        System.assert(message.contains('cannot edit Account'), message);
     }
 
     @IsTest

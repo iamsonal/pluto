@@ -402,4 +402,100 @@ describe('c-tool-authoring-editor', () => {
         await flush();
         expect(describeDraft).toHaveBeenCalledTimes(1);
     });
+
+    describe('unfinished queries', () => {
+        const message = 'The query needs FROM and one object, such as SELECT Subject FROM Case WHERE CaseNumber = :caseNumber.';
+        const queryView = (problems = []) =>
+            createView({
+                toolType: 'QueryRecords',
+                settings: [{ name: 'query', label: 'Query', type: 'query', required: true }],
+                inputs: [],
+                problems
+            });
+        const focusQuery = (element, editing) => form(element).dispatchEvent(new CustomEvent('queryeditingchange', { detail: { name: 'query', editing } }));
+        const changeQuery = (element, value) => form(element).dispatchEvent(new CustomEvent('settingchange', { detail: { name: 'query', value } }));
+
+        beforeEach(() => {
+            jest.useFakeTimers();
+            loadTool.mockResolvedValue({ toolType: 'QueryRecords', implementationConfiguration: '{"query":"SELECT Id FROM Case"}', view: queryView() });
+            describeDraft.mockResolvedValue(
+                queryView([
+                    { target: 'settings', message },
+                    { target: 'inputSchema', message }
+                ])
+            );
+        });
+
+        it('keeps the live preview but waits until blur to show SELECT as an incomplete query', async () => {
+            const element = create({ recordId: 'a00000000000000AAA' });
+            await flush();
+            focusQuery(element, true);
+            changeQuery(element, 'SELECT ');
+            jest.advanceTimersByTime(800);
+            await flush();
+            expect(describeDraft).toHaveBeenCalledTimes(1);
+            expect(JSON.parse(describeDraft.mock.calls[0][0].implementationConfiguration).query).toBe('SELECT ');
+            expect(toolProblems(element)).toEqual([]);
+
+            focusQuery(element, false);
+            await flush();
+            expect(toolProblems(element)).toEqual([message]);
+        });
+
+        it('shows known query problems on Save even while the query box has focus', async () => {
+            const element = create({ recordId: 'a00000000000000AAA' });
+            await flush();
+            focusQuery(element, true);
+            changeQuery(element, 'SELECT ');
+            jest.advanceTimersByTime(800);
+            await flush();
+            expect(toolProblems(element)).toEqual([]);
+            const draft = element.prepareDraft();
+            await flush();
+            expect(JSON.parse(draft.implementationConfiguration).query).toBe('SELECT ');
+            expect(toolProblems(element)).toEqual([message]);
+
+            changeQuery(element, 'SELECT Id ');
+            await flush();
+            expect(toolProblems(element)).toEqual([]);
+        });
+
+        it('does not resurrect an old error on blur while a newer check is pending', async () => {
+            loadTool.mockResolvedValue({
+                toolType: 'QueryRecords',
+                implementationConfiguration: '{"query":"SELECT"}',
+                view: queryView([{ target: 'settings', message }])
+            });
+            let answer;
+            describeDraft.mockImplementation(
+                () =>
+                    new Promise((resolve) => {
+                        answer = resolve;
+                    })
+            );
+            const element = create({ recordId: 'a00000000000000AAA' });
+            await flush();
+            expect(toolProblems(element)).toEqual([message]);
+            focusQuery(element, true);
+            changeQuery(element, 'SELECT Id FROM Case');
+            focusQuery(element, false);
+            await flush();
+            expect(toolProblems(element)).toEqual([]);
+            jest.advanceTimersByTime(800);
+            answer(queryView());
+            await flush();
+            expect(toolProblems(element)).toEqual([]);
+        });
+
+        it('keeps server failures visible while the query is being written', async () => {
+            describeDraft.mockRejectedValue(new Error('Could not check this tool.'));
+            const element = create({ recordId: 'a00000000000000AAA' });
+            await flush();
+            focusQuery(element, true);
+            changeQuery(element, 'SELECT ');
+            jest.advanceTimersByTime(800);
+            await flush();
+            expect(toolProblems(element)).toEqual(['Could not check this tool.']);
+        });
+    });
 });

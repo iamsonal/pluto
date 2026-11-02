@@ -95,6 +95,49 @@ private class ToolTryControllerTest {
         System.assertEquals(0, KernelTestTool.invocationCount);
     }
 
+    /** A Query Records tool on Account, on an agent whose execution user is on Minimum Access and cannot read Account. */
+    private static AgentTool__c accountQueryTool(Boolean withIdentity) {
+        AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
+        if (withIdentity) {
+            User principal = AgentKernelTestFactory.servicePrincipalUser();
+            System.runAs(AgentKernelTestFactory.self()) {
+                principal.ProfileId = [SELECT Id FROM Profile WHERE Name = 'Minimum Access - Salesforce' LIMIT 1].Id;
+                update principal;
+            }
+            AgentKernelTestFactory.useDelegatedPrincipal(definition, principal.Id);
+        }
+        AgentTool__c created = new AgentTool__c(
+            Name = 'Account query',
+            AgentDefinition__c = definition.Id,
+            DeveloperName__c = 'account_query',
+            Description__c = 'Reads an Account.',
+            ToolType__c = 'QueryRecords',
+            ImplementationConfiguration__c = '{"query":"SELECT Name FROM Account WHERE Id = :anchorId LIMIT 1"}',
+            IsActive__c = true,
+            SortOrder__c = 1
+        );
+        insert created;
+        return created;
+    }
+
+    @IsTest
+    static void tryStateWarnsWhatTheExecutionUserCannotReadWithoutBlockingTheDryRun() {
+        AgentTool__c created = accountQueryTool(true);
+
+        ToolTryController.TryState state = ToolTryController.getTryState(created.Id);
+
+        System.assertEquals(true, state.canTry, 'Missing access is a warning, not a reason to refuse the dry run.');
+        System.assertNotEquals(null, state.executionUserAccess);
+        System.assert(state.executionUserAccess.contains('cannot read Account'), state.executionUserAccess);
+    }
+
+    @IsTest
+    static void tryStateHasNoAccessWarningForAnAgentWithoutAnIdentity() {
+        AgentTool__c created = accountQueryTool(false);
+
+        System.assertEquals(null, ToolTryController.getTryState(created.Id).executionUserAccess, 'Nobody knows in advance who runs such an agent.');
+    }
+
     @IsTest
     static void refusesAUserWhoCannotEditTools() {
         AgentTool__c created = tool(AgentToolTypeTestFixtures.IN_ORG);

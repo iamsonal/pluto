@@ -171,6 +171,26 @@ public class AgentKernelTestFactory {
         return userWith(new List<String>{ HUMAN_DECISION }).Id;
     }
 
+    /** An active user who holds Approval Relay, as an approval process integration needs. */
+    public static User relayUser() {
+        return userWith(new List<String>{ APPROVAL_RELAY });
+    }
+
+    /** Removes every direct grant of Approval Relay in the org, so a test sees an org with no relay user. */
+    public static void removeRelayUsers() {
+        Set<Id> grantingSetIds = new Set<Id>();
+        for (SetupEntityAccess access : [
+            SELECT ParentId
+            FROM SetupEntityAccess
+            WHERE SetupEntityId IN (SELECT Id FROM CustomPermission WHERE DeveloperName = :APPROVAL_RELAY AND NamespacePrefix = NULL)
+        ]) {
+            grantingSetIds.add(access.ParentId);
+        }
+        System.runAs(self()) {
+            delete [SELECT Id FROM PermissionSetAssignment WHERE PermissionSetId IN :grantingSetIds AND PermissionSetGroupId = NULL];
+        }
+    }
+
     /** A retry request for the leased command, as the worker builds it. */
     public static AgentKernelModels.RetryRequest retryRequest(AgentRun__c run, AgentCommand__c command, String errorCode, Integer delaySeconds) {
         AgentKernelModels.RetryRequest request = new AgentKernelModels.RetryRequest();
@@ -300,11 +320,19 @@ public class AgentKernelTestFactory {
             Description__c = 'A test-only kernel tool.',
             ToolType__c = AgentToolTypeTestFixtures.IN_ORG,
             InputSchema__c = inputSchema,
-            RequiresApproval__c = false,
             IsActive__c = true,
             SortOrder__c = 1
         );
         insert tool;
+        return tool;
+    }
+
+    /** A tool whose calls the agent's policy decides. Set the definition's policy class first. */
+    public static AgentTool__c createPolicyTool(Id definitionId, String developerName) {
+        AgentTool__c tool = createTool(definitionId, developerName, '{"type":"object"}');
+        tool.ApprovalMode__c = AgentKernelModels.APPROVAL_DECIDED_BY_POLICY;
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY;
+        updateRecord(tool);
         return tool;
     }
 

@@ -14,7 +14,7 @@
 import { LightningElement, api } from 'lwc';
 import { highlightJson } from 'c/plutoRunStoryModel';
 
-/** One step input or output, shown as colour-coded JSON. */
+/** One step input or output. JSON stays colour-coded. Any other text is rendered as Markdown. */
 export default class PlutoRunStoryPayload extends LightningElement {
     @api label;
     @api emptyText = 'Nothing recorded.';

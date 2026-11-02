@@ -40,6 +40,7 @@ public with sharing class ToolTryController {
         /** The editor builds its form from this. */
         @AuraEnabled
         public String inputSchema { get; set; }
+        /** Calls of this tool can wait for approval in a real run. */
         @AuraEnabled
         public Boolean requiresApproval { get; set; }
         /** The tool acts on the record the agent starts from, so a dry run needs one. */
@@ -48,6 +49,13 @@ public with sharing class ToolTryController {
         /** Why the tool needs that record, in the admin's words; null when it does not. */
         @AuraEnabled
         public String recordHelp { get; set; }
+        /**
+         * What the agent's execution user cannot read, create, or edit for
+         * this tool, or null. A dry run runs as the admin, so it can succeed
+         * where the agent would be refused.
+         */
+        @AuraEnabled
+        public String executionUserAccess { get; set; }
     }
 
     public class TryResult {
@@ -84,13 +92,17 @@ public with sharing class ToolTryController {
         AgentTool__c tool = loadTool(toolId);
         TryState state = new TryState();
         state.toolName = tool.DeveloperName__c;
-        state.requiresApproval = tool.RequiresApproval__c == true;
+        state.requiresApproval = AgentApprovalService.mode(tool) != AgentKernelModels.APPROVAL_NOT_REQUIRED;
         state.reason = whyNot(tool);
         state.canTry = state.reason == null;
         // What the model would be sent now: built with the admin's edits, or hand-written.
         state.inputSchema = ToolSchemaService.effectiveSchema(tool).schema;
         state.recordHelp = recordHelp(tool);
         state.needsRecord = state.recordHelp != null;
+        state.executionUserAccess = ToolExecutionUserAccess.problem(
+            tool,
+            ToolExecutionUserAccess.executionUsers(new Set<Id>{ tool.AgentDefinition__c }).get(tool.AgentDefinition__c)
+        );
         return state;
     }
 
@@ -235,7 +247,7 @@ public with sharing class ToolTryController {
         }
         try {
             return [
-                SELECT Id, AgentDefinition__c, DeveloperName__c, ToolType__c, ImplementationConfiguration__c, InputSchema__c, RequiresApproval__c
+                SELECT Id, AgentDefinition__c, DeveloperName__c, ToolType__c, ImplementationConfiguration__c, InputSchema__c, ApprovalMode__c
                 FROM AgentTool__c
                 WHERE Id = :toolId
                 WITH USER_MODE

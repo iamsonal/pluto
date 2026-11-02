@@ -93,6 +93,45 @@ private class ToolAuthoringControllerTest {
     }
 
     @IsTest
+    static void queryFieldsSayWhereTheyCanBeUsed() {
+        Map<String, ToolAuthoringController.FieldOption> fields = new Map<String, ToolAuthoringController.FieldOption>();
+        for (ToolAuthoringController.FieldOption field : ToolAuthoringController.getFieldOptions('Account')) {
+            fields.put(field.value, field);
+        }
+        System.assertEquals(true, fields.get('Name').filterable, 'Account Name can be offered in WHERE.');
+        System.assertEquals(true, fields.get('Name').sortable, 'Account Name can be offered in ORDER BY.');
+        System.assertEquals(false, fields.get('Description').filterable, 'Long text must not be offered in WHERE.');
+        System.assertEquals(false, fields.get('Description').sortable, 'Long text must not be offered in ORDER BY.');
+    }
+
+    @IsTest
+    static void fieldSuggestionsDoNotRevealAnObjectWithoutReadAccess() {
+        User outsider = new User(
+            Alias = 'queryout',
+            Email = 'pluto-query-outsider@example.com',
+            EmailEncodingKey = 'UTF-8',
+            LastName = 'No Query Access',
+            LanguageLocaleKey = 'en_US',
+            LocaleSidKey = 'en_US',
+            ProfileId = [SELECT Id FROM Profile WHERE Name = 'Minimum Access - Salesforce' LIMIT 1]
+            .Id,
+            TimeZoneSidKey = 'America/Los_Angeles',
+            Username = 'pluto-query-outsider-' + Crypto.getRandomInteger() + '@example.com'
+        );
+        insert outsider;
+        System.runAs(outsider) {
+            System.assertEquals(false, Schema.sObjectType.AgentTool__c.isAccessible(), 'The test user has no Agent Tool read access.');
+            System.assert(ToolAuthoringController.getFieldOptions('AgentTool__c').isEmpty(), 'Do not reveal fields without object read access.');
+            Map<String, Schema.SObjectType> objectTypes = Schema.getGlobalDescribe();
+            for (ToolAuthoringController.Option option : ToolAuthoringController.searchStandardTargetSObjects('', 'QueryRecords')) {
+                System.assert(objectTypes.get(option.value).getDescribe().isAccessible(), 'The initial list must refuse objects without read access.');
+                System.assert(!StandardToolSupport.isCoreObject(option.value), 'The initial list must refuse Core objects.');
+            }
+            System.assert(ToolAuthoringController.getChildRelationshipOptions('AgentTool__c').isEmpty(), 'Do not reveal relationships without read access.');
+        }
+    }
+
+    @IsTest
     static void searchesFlowsByLabelOrApiName() {
         for (ToolAuthoringController.Option flow : ToolAuthoringController.searchFlows('northwind')) {
             System.assert(flow.label.toLowerCase().contains('northwind'), flow.label);
@@ -171,6 +210,11 @@ private class ToolAuthoringControllerTest {
             'Pluto Core objects are never offered to a tool.'
         );
         System.assert(ToolAuthoringController.searchStandardTargetSObjects(' ', 'UpdateRecord').isEmpty());
+        List<ToolAuthoringController.Option> queryObjects = ToolAuthoringController.searchStandardTargetSObjects('', 'QueryRecords');
+        System.assert(!queryObjects.isEmpty(), 'An empty query search starts with readable objects.');
+        System.assert(queryObjects.size() <= 25, 'The initial object list stays bounded.');
+        System.assert(!values(queryObjects).contains('AgentTool__c'), 'The initial list excludes Core objects.');
+        System.assert(ToolAuthoringController.searchStandardTargetSObjects('O', 'QueryRecords').isEmpty());
 
         List<String> starting = ToolAuthoringController.getStartingFields('Contact', 'CreateRecord');
         System.assert(starting.contains('LastName'), 'A required field starts on a new Create Record tool.');
@@ -199,7 +243,10 @@ private class ToolAuthoringControllerTest {
         System.assertEquals('A complete tool draft is required.', refusal(null, 'UpdateRecord', null));
         AgentTool__c sneaky = header(true);
         sneaky.InputSchema__c = HAND_WRITTEN;
-        System.assertEquals('The tool draft contains a field that cannot be edited here.', refusal(sneaky, 'UpdateRecord', null));
+        System.assertEquals(
+            'The tool draft contains a field that cannot be edited here: InputSchema__c. Refresh the page and try again.',
+            refusal(sneaky, 'UpdateRecord', null)
+        );
         System.assertEquals('Choose a Tool Type.', refusal(header(true), ' ', null));
         System.assertEquals('Settings must be a JSON object.', refusal(header(true), 'UpdateRecord', 'not json'));
         System.assertEquals('Settings must be a JSON object.', refusal(header(true), 'UpdateRecord', '["Case"]'));
@@ -240,7 +287,6 @@ private class ToolAuthoringControllerTest {
             AgentDefinition__c = AgentKernelTestFactory.createDefinition().Id,
             DeveloperName__c = 'set_priority',
             Description__c = 'Sets a case priority.',
-            RequiresApproval__c = false,
             IsActive__c = active,
             SortOrder__c = 1
         );

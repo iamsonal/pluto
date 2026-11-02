@@ -20,8 +20,9 @@
 @SuppressWarnings('PMD.ApexCRUDViolation')
 public without sharing class AgentApprovalService {
     public static final String RELAY_PERMISSION = 'AgentKernelApprovalRelay';
-    public static final Integer DEFAULT_TIMEOUT_HOURS = 24;
-    public static final Integer MAX_TIMEOUT_HOURS = 168;
+    /** Approval timeouts, from the tool or a policy, are whole minutes: 1 through 7 days, blank 24 hours. */
+    public static final Integer DEFAULT_TIMEOUT_MINUTES = 1440;
+    public static final Integer MAX_TIMEOUT_MINUTES = 10080;
     private static final Integer MAX_MEMBERSHIP_DEPTH = 5;
     private static final Integer MAX_ROLE_DEPTH = 10;
 
@@ -34,7 +35,17 @@ public without sharing class AgentApprovalService {
         AgentKernelModels.APPROVER_QUEUE,
         AgentKernelModels.APPROVER_ANCHOR_OWNER,
         AgentKernelModels.APPROVER_REQUESTER_MANAGER,
-        AgentKernelModels.APPROVER_DELIVERY_CHANNEL
+        AgentKernelModels.APPROVER_APPROVAL_PROCESS
+    };
+
+    public static final String TOOL_APPROVAL_REASON = 'Tool configuration requires approval.';
+    public static final String REQUIRED_BY_TOOL = 'Tool Setting';
+    public static final String REQUIRED_BY_POLICY = 'Policy';
+
+    private static final Set<String> APPROVAL_MODES = new Set<String>{
+        AgentKernelModels.APPROVAL_NOT_REQUIRED,
+        AgentKernelModels.APPROVAL_ALWAYS_REQUIRED,
+        AgentKernelModels.APPROVAL_DECIDED_BY_POLICY
     };
 
     /** The resolved assignment and deadline for one approval, fixed when the wait begins. */
@@ -46,6 +57,8 @@ public without sharing class AgentApprovalService {
         public String expiryAction;
         /** The tool whose call waits; recorded on the approval so routing and reports need no tool names. */
         public Id toolId;
+        /** Tool Setting or Policy: what asked for this approval. */
+        public String requiredBy;
     }
 
     /** A wait that cannot be assigned to an eligible approver; the run pauses instead of waiting unseen. */
@@ -58,23 +71,57 @@ public without sharing class AgentApprovalService {
         public Id relayedById;
     }
 
+    /** The tool's Approval Mode, with blank read as Not Required. */
+    public static String mode(AgentTool__c tool) {
+        return tool == null || String.isBlank(tool.ApprovalMode__c) ? AgentKernelModels.APPROVAL_NOT_REQUIRED : tool.ApprovalMode__c;
+    }
+
     /**
-     * Resolves the approver from the policy override or the tool's typed
-     * settings. Runs as the execution user inside the tool worker.
+     * Resolves the approver for a waiting call. An Always Required tool waits
+     * for its own approver. A Decided by Policy tool waits for the queue or
+     * user the policy named, which must exist and never falls back. Either way
+     * the tool's When Approval Expires applies, and its Approval Timeout unless
+     * the policy gave one. held is the policy's Require Approval answer, or
+     * null for an Always Required tool. Runs as the execution user inside the
+     * tool worker.
      */
-    public static Request request(AgentRun__c run, AgentTool__c tool, String reason, Integer policyTimeoutSeconds, Id policyApproverId) {
+    public static Request request(AgentRun__c run, AgentTool__c tool, AgentKernelModels.ToolApprovalResponse held) {
+        Boolean decidedByPolicy = mode(tool) == AgentKernelModels.APPROVAL_DECIDED_BY_POLICY;
+        if (decidedByPolicy && held == null) {
+            throw new AssignmentException('Tool ' + tool.DeveloperName__c + ' is Decided by Policy, but the policy named no approver.');
+        }
+        if (!decidedByPolicy && String.isBlank(tool.ApproverType__c)) {
+            throw new AssignmentException(
+                'Tool ' + tool.DeveloperName__c + ' requires approval but has no Approver Type. Choose an Approver Type on the tool, then rescue the run.'
+            );
+        }
         Request result = new Request();
         result.toolId = tool.Id;
-        result.reason = String.isBlank(reason) ? 'Tool configuration requires approval.' : reason;
+        result.requiredBy = decidedByPolicy ? REQUIRED_BY_POLICY : REQUIRED_BY_TOOL;
+        result.reason = !decidedByPolicy || String.isBlank(held.reason) ? TOOL_APPROVAL_REASON : held.reason.trim();
         result.expiryAction = String.isBlank(tool.ApprovalExpiryAction__c) ? AgentKernelModels.APPROVAL_EXPIRY_DENY : tool.ApprovalExpiryAction__c;
-        Integer timeoutSeconds = policyTimeoutSeconds != null
-            ? policyTimeoutSeconds
-            : (tool.ApprovalTimeoutHours__c == null ? DEFAULT_TIMEOUT_HOURS : tool.ApprovalTimeoutHours__c.intValue()) * 3600;
-        result.expiresAt = System.now().addSeconds(timeoutSeconds);
+        Integer timeoutMinutes = decidedByPolicy && held.timeoutMinutes != null
+            ? held.timeoutMinutes
+            : (tool.ApprovalTimeoutMinutes__c == null ? DEFAULT_TIMEOUT_MINUTES : tool.ApprovalTimeoutMinutes__c.intValue());
+        result.expiresAt = System.now().addMinutes(timeoutMinutes);
 
-        if (policyApproverId != null) {
-            result.approverType = policyApproverId.getSObjectType() == User.SObjectType ? AgentKernelModels.APPROVER_USER : AgentKernelModels.APPROVER_QUEUE;
-            result.ownerId = policyApproverId;
+        if (decidedByPolicy) {
+            String policyQueue = String.isBlank(held.approverQueue) ? null : held.approverQueue.trim();
+            if (policyQueue != null) {
+                Map<String, Id> named = approvalQueues(new Set<String>{ policyQueue });
+                if (named.isEmpty()) {
+                    throw new AssignmentException(
+                        'The authorization policy named queue ' +
+                            policyQueue +
+                            ', but no queue with that API name supports Agent Approval records. Create the queue or add Agent Approval to its supported objects, then rescue the run.'
+                    );
+                }
+                result.approverType = AgentKernelModels.APPROVER_QUEUE;
+                result.ownerId = named.values()[0];
+            } else {
+                result.approverType = AgentKernelModels.APPROVER_USER;
+                result.ownerId = held.approverUserId;
+            }
         } else {
             result.approverType = tool.ApproverType__c;
             Boolean hasFallbackQueue = result.approverType == AgentKernelModels.APPROVER_ANCHOR_OWNER && !String.isBlank(tool.ApproverQueue__c);
@@ -96,7 +143,11 @@ public without sharing class AgentApprovalService {
                 result.ownerId = fallback.isEmpty() ? null : fallback.values()[0];
             }
         }
-        if (result.approverType == AgentKernelModels.APPROVER_DELIVERY_CHANNEL) {
+        if (result.approverType == AgentKernelModels.APPROVER_APPROVAL_PROCESS) {
+            // Only a relay user can pass the process's decision to Core, so without one the call could never be decided.
+            if (!AgentHumanDecisionGuard.hasActiveRelayUser(new Set<Id>{ run.ExpectedPrincipalUser__c, run.ResolvedPrincipalUser__c })) {
+                throw new AssignmentException(APPROVAL_PROCESS_RELAY_MESSAGE + ' Then rescue the run.');
+            }
             return result;
         }
         if (result.ownerId == null) {
@@ -133,7 +184,7 @@ public without sharing class AgentApprovalService {
             ExpiryAction__c = request.expiryAction,
             RunRevision__c = run.Revision__c
         );
-        // A Delivery Channel approval has no Core-assigned approver; the requester owns it
+        // An Approval Process approval has no Core-assigned approver; the requester owns it
         // rather than the execution user that inserts it, which never decides or relays.
         approval.OwnerId = request.ownerId != null ? request.ownerId : run.InitiatingUser__c;
         write(new List<AgentApproval__c>{ approval }, true);
@@ -170,7 +221,7 @@ public without sharing class AgentApprovalService {
      * A direct decider must hold Human Decision and be the owner or a direct
      * member of the owning queue. A relay must hold Approval Relay and name an
      * active decider with Human Decision; Core still checks assignment unless
-     * the approval is routed by a Delivery Channel. Neither may be the run's
+     * the approval is routed by an Approval Process. Neither may be the run's
      * execution user, and the requester decides only when allowed.
      */
     public static Authorization authorize(AgentApproval__c approval, AgentRun__c run, Id requestedDeciderId) {
@@ -182,7 +233,7 @@ public without sharing class AgentApprovalService {
         if (requestedDeciderId != null && requestedDeciderId != callerId) {
             if (!isRelayAuthorized()) {
                 throw new AgentKernelException.AuthorizationException(
-                    'Only an approval channel user with Agent Kernel Approval Relay can record another user\'s decision.'
+                    'Only an approval relay user with Agent Kernel Approval Relay can record another user\'s decision.'
                 );
             }
             if (!AgentHumanDecisionGuard.isAuthorizedUser(requestedDeciderId)) {
@@ -191,8 +242,8 @@ public without sharing class AgentApprovalService {
             result.deciderId = requestedDeciderId;
             result.relayedById = callerId;
         } else {
-            if (approval.ApproverType__c == AgentKernelModels.APPROVER_DELIVERY_CHANNEL) {
-                throw new AgentKernelException.AuthorizationException('This approval is decided through its approval channel.');
+            if (approval.ApproverType__c == AgentKernelModels.APPROVER_APPROVAL_PROCESS) {
+                throw new AgentKernelException.AuthorizationException('This approval is decided through its approval process.');
             }
             AgentHumanDecisionGuard.assertAuthorized();
             result.deciderId = callerId;
@@ -200,12 +251,12 @@ public without sharing class AgentApprovalService {
         if (isExecutionPrincipal(run, result.deciderId)) {
             throw new AgentKernelException.AuthorizationException('The execution user cannot decide an approval.');
         }
-        if (approval.ApproverType__c != AgentKernelModels.APPROVER_DELIVERY_CHANNEL && !isAssignee(approval.OwnerId, result.deciderId)) {
+        if (approval.ApproverType__c != AgentKernelModels.APPROVER_APPROVAL_PROCESS && !isAssignee(approval.OwnerId, result.deciderId)) {
             throw new AgentKernelException.AuthorizationException('Only the assigned approver or a member of the assigned queue can decide this approval.');
         }
-        // The channel's process shares the approval with its reviewers; a relay cannot name anyone else.
+        // The approval process shares the approval with its reviewers; a relay cannot name anyone else.
         if (
-            approval.ApproverType__c == AgentKernelModels.APPROVER_DELIVERY_CHANNEL &&
+            approval.ApproverType__c == AgentKernelModels.APPROVER_APPROVAL_PROCESS &&
             !AttendedAccessService.readableRecordIds(result.deciderId, new Set<Id>{ approval.Id }).contains(approval.Id)
         ) {
             throw new AgentKernelException.AuthorizationException('The decider must be able to read this approval.');
@@ -215,8 +266,8 @@ public without sharing class AgentApprovalService {
 
     /**
      * Returns the plaintext input of a pending approval to a reviewer who could
-     * decide it. Delivery Channel approvals are reviewable by any Human Decision
-     * holder who can read the record, because the channel grants that access.
+     * decide it. Approval Process approvals are reviewable by any Human Decision
+     * holder who can read the record, because the approval process grants that access.
      */
     public static String resolveInput(Id approvalId) {
         AgentApproval__c approval = lock(approvalId);
@@ -230,7 +281,7 @@ public without sharing class AgentApprovalService {
     /** Refuses anyone who could not decide this approval. */
     public static void assertReviewer(AgentApproval__c approval) {
         AgentHumanDecisionGuard.assertAuthorized();
-        Boolean reviewable = approval.ApproverType__c == AgentKernelModels.APPROVER_DELIVERY_CHANNEL
+        Boolean reviewable = approval.ApproverType__c == AgentKernelModels.APPROVER_APPROVAL_PROCESS
             ? [SELECT COUNT() FROM AgentApproval__c WHERE Id = :approval.Id WITH USER_MODE] == 1
             : isAssignee(approval.OwnerId, UserInfo.getUserId());
         if (!reviewable) {
@@ -356,8 +407,8 @@ public without sharing class AgentApprovalService {
             }
             if (record.OwnerId != previous.OwnerId && previous.Status__c != AgentKernelModels.APPROVAL_STATUS_PENDING) {
                 record.addError('Only a pending Agent Approval can be reassigned.');
-            } else if (record.OwnerId != previous.OwnerId && previous.ApproverType__c == AgentKernelModels.APPROVER_DELIVERY_CHANNEL) {
-                // The channel decides who reviews it, and the owner's access is what a relay checks.
+            } else if (record.OwnerId != previous.OwnerId && previous.ApproverType__c == AgentKernelModels.APPROVER_APPROVAL_PROCESS) {
+                // The approval process decides who reviews it, and the owner's access is what a relay checks.
                 record.addError('An Approval Process approval is routed by its approval process; reassign it there.');
             } else if (record.OwnerId != previous.OwnerId && !rejected) {
                 reassigned.add(record);
@@ -447,7 +498,7 @@ public without sharing class AgentApprovalService {
     /**
      * The active users who may decide each Core-assigned approval: its owner, or
      * the members of its owning queue, who hold Human Decision and are not the
-     * run's service user. Delivery Channel approvals have none. At most
+     * run's service user. Approval Process approvals have none. At most
      * maxPerApproval users per approval, in a stable order.
      */
     public static Map<Id, Deciders> eligibleDeciders(List<AgentApproval__c> approvals, Integer maxPerApproval) {
@@ -465,7 +516,7 @@ public without sharing class AgentApprovalService {
         for (AgentApproval__c approval : approvals == null ? new List<AgentApproval__c>() : approvals) {
             Set<Id> candidates = new Set<Id>();
             AgentRun__c run = runs.get(approval.AgentRun__c);
-            if (run != null && approval.OwnerId != null && approval.ApproverType__c != AgentKernelModels.APPROVER_DELIVERY_CHANNEL) {
+            if (run != null && approval.OwnerId != null && approval.ApproverType__c != AgentKernelModels.APPROVER_APPROVAL_PROCESS) {
                 if (approval.OwnerId.getSObjectType() == User.SObjectType) {
                     candidates.add(approval.OwnerId);
                 } else if (approval.OwnerId.getSObjectType() == Group.SObjectType) {
@@ -500,32 +551,54 @@ public without sharing class AgentApprovalService {
         return result;
     }
 
+    public static final String POLICY_REQUIRED_MESSAGE = 'This tool\'s Approval Mode is Decided by Policy, but its agent has no Tool Authorization Policy Class. Set the agent\'s policy, or choose Not Required or Always Required.';
+    public static final String APPROVAL_PROCESS_RELAY_MESSAGE = 'Approver Type is Approval Process, but no active user holds Agent Kernel Approval Relay, so no decision could reach Pluto. Set up the approval relay user, or choose another Approver Type.';
+
     /** Save-time rules for a tool's approval settings. */
     public static void validateTools(List<AgentTool__c> records) {
         Set<Id> approverUserIds = new Set<Id>();
         Set<String> queueNames = new Set<String>();
+        Set<Id> policyDefinitionIds = new Set<Id>();
+        Boolean checksRelay = false;
         for (AgentTool__c record : records) {
             String error = settingsError(record);
             if (error != null) {
                 record.addError(error);
                 continue;
             }
+            if (record.IsActive__c == true && mode(record) == AgentKernelModels.APPROVAL_DECIDED_BY_POLICY && record.AgentDefinition__c != null) {
+                policyDefinitionIds.add(record.AgentDefinition__c);
+            }
             if (record.ApproverType__c == AgentKernelModels.APPROVER_USER) {
                 approverUserIds.add(record.ApproverUser__c);
+            } else if (record.ApproverType__c == AgentKernelModels.APPROVER_APPROVAL_PROCESS && record.IsActive__c == true) {
+                checksRelay = true;
             } else if (record.ApproverType__c == AgentKernelModels.APPROVER_QUEUE) {
                 queueNames.add(record.ApproverQueue__c.trim());
             } else if (record.ApproverType__c == AgentKernelModels.APPROVER_ANCHOR_OWNER && !String.isBlank(record.ApproverQueue__c)) {
                 queueNames.add(record.ApproverQueue__c.trim());
             }
         }
+        Set<Id> withoutPolicyIds = policyDefinitionIds.isEmpty()
+            ? new Set<Id>()
+            : new Map<Id, AgentDefinition__c>(
+                      [SELECT Id FROM AgentDefinition__c WHERE Id IN :policyDefinitionIds AND ToolAuthorizationPolicyClass__c = NULL WITH SYSTEM_MODE]
+                  )
+                  .keySet();
         Map<String, Id> queuesByName = approvalQueues(queueNames);
-        Set<Id> eligibleUserIds = new Set<Id>();
-        for (Id userId : approverUserIds) {
-            if (AgentHumanDecisionGuard.isAuthorizedUser(userId)) {
-                eligibleUserIds.add(userId);
-            }
-        }
+        Set<Id> eligibleUserIds = AgentHumanDecisionGuard.usersWithDecisionAuthority(approverUserIds);
+        Boolean relayMissing = checksRelay && !AgentHumanDecisionGuard.hasActiveRelayUser(new Set<Id>());
         for (AgentTool__c record : records) {
+            if (relayMissing && record.IsActive__c == true && record.ApproverType__c == AgentKernelModels.APPROVER_APPROVAL_PROCESS) {
+                record.ApproverType__c.addError(APPROVAL_PROCESS_RELAY_MESSAGE);
+            }
+            if (
+                record.IsActive__c == true &&
+                mode(record) == AgentKernelModels.APPROVAL_DECIDED_BY_POLICY &&
+                withoutPolicyIds.contains(record.AgentDefinition__c)
+            ) {
+                record.ApprovalMode__c.addError(POLICY_REQUIRED_MESSAGE);
+            }
             if (
                 record.ApproverType__c == AgentKernelModels.APPROVER_USER &&
                 record.ApproverUser__c != null &&
@@ -549,12 +622,89 @@ public without sharing class AgentApprovalService {
         return FeatureManagement.checkPermission(RELAY_PERMISSION);
     }
 
-    private static String settingsError(AgentTool__c record) {
-        String approverType = record.ApproverType__c;
-        if (record.RequiresApproval__c == true && String.isBlank(approverType)) {
-            return 'Choose an Approver Type for a tool that requires approval.';
+    /**
+     * Refuses clearing an agent's Tool Authorization Policy Class while an
+     * active tool of the agent is Decided by Policy, because nothing would
+     * decide that tool's calls.
+     */
+    public static void validateDefinitions(List<AgentDefinition__c> records, Map<Id, AgentDefinition__c> previousById) {
+        if (previousById == null) {
+            return;
         }
-        if (!String.isBlank(approverType) && !APPROVER_TYPES.contains(approverType)) {
+        Set<Id> clearedIds = new Set<Id>();
+        for (AgentDefinition__c record : records) {
+            AgentDefinition__c previous = previousById.get(record.Id);
+            if (previous != null && !String.isBlank(previous.ToolAuthorizationPolicyClass__c) && String.isBlank(record.ToolAuthorizationPolicyClass__c)) {
+                clearedIds.add(record.Id);
+            }
+        }
+        if (clearedIds.isEmpty()) {
+            return;
+        }
+        Map<Id, List<String>> toolNamesByDefinition = new Map<Id, List<String>>();
+        for (AgentTool__c tool : [
+            SELECT AgentDefinition__c, DeveloperName__c
+            FROM AgentTool__c
+            WHERE AgentDefinition__c IN :clearedIds AND IsActive__c = TRUE AND ApprovalMode__c = :AgentKernelModels.APPROVAL_DECIDED_BY_POLICY
+            WITH SYSTEM_MODE
+            ORDER BY DeveloperName__c
+        ]) {
+            if (!toolNamesByDefinition.containsKey(tool.AgentDefinition__c)) {
+                toolNamesByDefinition.put(tool.AgentDefinition__c, new List<String>());
+            }
+            toolNamesByDefinition.get(tool.AgentDefinition__c).add(tool.DeveloperName__c);
+        }
+        for (AgentDefinition__c record : records) {
+            List<String> toolNames = toolNamesByDefinition.get(record.Id);
+            if (toolNames != null) {
+                record.ToolAuthorizationPolicyClass__c.addError(
+                    'These tools are Decided by Policy, so the agent needs its policy: ' +
+                        String.join(toolNames, ', ') +
+                        '. Change their Approval Mode first, or keep the policy.'
+                );
+            }
+        }
+    }
+
+    private static String settingsError(AgentTool__c record) {
+        String approvalMode = mode(record);
+        String approverType = record.ApproverType__c;
+        if (!APPROVAL_MODES.contains(approvalMode)) {
+            return 'Approval Mode is invalid.';
+        }
+        if (approvalMode == AgentKernelModels.APPROVAL_NOT_REQUIRED) {
+            if (
+                !String.isBlank(approverType) ||
+                record.ApproverUser__c != null ||
+                !String.isBlank(record.ApproverQueue__c) ||
+                record.ApprovalTimeoutMinutes__c != null ||
+                !String.isBlank(record.ApprovalExpiryAction__c)
+            ) {
+                return 'Approval Mode is Not Required, so clear the approver, Approval Timeout, and When Approval Expires.';
+            }
+            return null;
+        }
+        if (String.isBlank(record.ApprovalExpiryAction__c)) {
+            return 'Choose When Approval Expires for a tool whose calls can wait for approval.';
+        }
+        if (
+            record.ApprovalTimeoutMinutes__c != null &&
+            (record.ApprovalTimeoutMinutes__c < 1 ||
+            record.ApprovalTimeoutMinutes__c > MAX_TIMEOUT_MINUTES ||
+            record.ApprovalTimeoutMinutes__c != record.ApprovalTimeoutMinutes__c.intValue())
+        ) {
+            return 'Approval Timeout must be a whole number of minutes from 1 to ' + MAX_TIMEOUT_MINUTES + ' (7 days).';
+        }
+        if (approvalMode == AgentKernelModels.APPROVAL_DECIDED_BY_POLICY) {
+            if (!String.isBlank(approverType) || record.ApproverUser__c != null || !String.isBlank(record.ApproverQueue__c)) {
+                return 'Approval Mode is Decided by Policy, so the policy names the approver. Clear Approver Type, Approver User, and Approver Queue.';
+            }
+            return null;
+        }
+        if (String.isBlank(approverType)) {
+            return 'Choose an Approver Type for a tool whose Approval Mode is Always Required.';
+        }
+        if (!APPROVER_TYPES.contains(approverType)) {
             return 'Approver Type is invalid.';
         }
         if (approverType == AgentKernelModels.APPROVER_USER && record.ApproverUser__c == null) {
@@ -573,25 +723,11 @@ public without sharing class AgentApprovalService {
         ) {
             return 'Approver Queue applies only when Approver Type is Queue, or Anchor Record Owner as its fallback queue.';
         }
-        if (
-            record.ApprovalTimeoutHours__c != null &&
-            (record.ApprovalTimeoutHours__c < 1 ||
-            record.ApprovalTimeoutHours__c > MAX_TIMEOUT_HOURS ||
-            record.ApprovalTimeoutHours__c != record.ApprovalTimeoutHours__c.intValue())
-        ) {
-            return 'Approval Timeout must be a whole number of hours from 1 to ' + MAX_TIMEOUT_HOURS + '.';
-        }
-        if (String.isBlank(approverType) && record.ApprovalTimeoutHours__c != null) {
-            return 'Approval settings apply only when an Approver Type is chosen.';
-        }
         return null;
     }
 
     private static Id configuredOwner(AgentRun__c run, AgentTool__c tool) {
         String approverType = tool.ApproverType__c;
-        if (String.isBlank(approverType)) {
-            throw new AssignmentException('Tool ' + tool.DeveloperName__c + ' has no Approver Type, and the authorization policy named no approver.');
-        }
         if (approverType == AgentKernelModels.APPROVER_USER) {
             return tool.ApproverUser__c;
         }
@@ -606,7 +742,7 @@ public without sharing class AgentApprovalService {
             List<User> requesters = [SELECT ManagerId FROM User WHERE Id = :run.InitiatingUser__c WITH SYSTEM_MODE LIMIT 1];
             return requesters.isEmpty() ? null : requesters[0].ManagerId;
         }
-        if (approverType == AgentKernelModels.APPROVER_DELIVERY_CHANNEL) {
+        if (approverType == AgentKernelModels.APPROVER_APPROVAL_PROCESS) {
             return null;
         }
         throw new AssignmentException('Approver Type is invalid.');

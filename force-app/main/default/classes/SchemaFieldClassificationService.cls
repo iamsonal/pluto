@@ -12,12 +12,14 @@
  */
 
 /**
- * Transaction-cached access to Salesforce native field classifications.
- * This module caches metadata only; it never retains record values.
+ * Transaction-cached access to each field's Data Sensitivity Level. A field is
+ * sensitive at any level except Public and Internal, so a level an admin adds
+ * is protected too. Compliance Categorization records which rules apply, not
+ * how sensitive a value is, so it is not read. This module caches metadata
+ * only; it never retains record values.
  */
 public inherited sharing class SchemaFieldClassificationService {
-    private static final Set<String> SENSITIVE_LEVELS = new Set<String>{ 'confidential', 'restricted', 'missioncritical' };
-    private static final Set<String> SENSITIVE_COMPLIANCE_GROUPS = new Set<String>{ 'ccpa', 'coppa', 'gdpr', 'hipaa', 'pci', 'personalinfo', 'pii' };
+    private static final Set<String> OPEN_LEVELS = new Set<String>{ 'public', 'internal' };
     private static Map<String, Set<String>> sensitiveFieldsByObject = new Map<String, Set<String>>();
     @TestVisible
     private static Map<String, Set<String>> sensitiveFieldOverrides = new Map<String, Set<String>>();
@@ -39,29 +41,26 @@ public inherited sharing class SchemaFieldClassificationService {
             return;
         }
         Set<String> sensitiveFields = new Set<String>();
+        // Classification is setup metadata, not record data. Masking must not depend on what the
+        // run's user may see in Setup. In user mode this query can fail with an uncatchable
+        // internal error for a minimum-access user when fields on the object are classified.
         for (
             SObject fieldMetadata : Database.query(
-                'SELECT QualifiedApiName, SecurityClassification, ComplianceGroup ' +
-                'FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = :objectApiName',
-                AccessLevel.USER_MODE
+                'SELECT QualifiedApiName, SecurityClassification FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = :objectApiName',
+                AccessLevel.SYSTEM_MODE
             )
         ) {
-            String sensitivity = stringValue(fieldMetadata.get('SecurityClassification'));
-            String compliance = stringValue(fieldMetadata.get('ComplianceGroup'));
-            if (SENSITIVE_LEVELS.contains(normalize(sensitivity)) || hasSensitiveCompliance(compliance)) {
+            if (isSensitiveLevel(stringValue(fieldMetadata.get('SecurityClassification')))) {
                 sensitiveFields.add(normalize(stringValue(fieldMetadata.get('QualifiedApiName'))));
             }
         }
         sensitiveFieldsByObject.put(objectKey, sensitiveFields);
     }
 
-    private static Boolean hasSensitiveCompliance(String compliance) {
-        for (String complianceGroup : normalize(compliance).split(';')) {
-            if (SENSITIVE_COMPLIANCE_GROUPS.contains(complianceGroup.trim())) {
-                return true;
-            }
-        }
-        return false;
+    @TestVisible
+    private static Boolean isSensitiveLevel(String level) {
+        String normalized = normalize(level);
+        return normalized != '' && !OPEN_LEVELS.contains(normalized);
     }
 
     private static String stringValue(Object value) {

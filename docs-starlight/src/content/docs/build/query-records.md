@@ -19,6 +19,26 @@ A **Query Records** tool runs one SOQL query that you write. The agent fills in 
 
 In Pluto Console, type the query in the **SOQL query** box instead. It suggests objects, fields, and parameter names as you type. **Parameters**, below it, shows each input as soon as you stop typing.
 
+Click the query box, then choose `SELECT` to insert `SELECT Id FROM `. Choose an object from the list, or type at least two letters to search by name. The list shows at most 25 readable objects. After you choose the object, the caret moves just after `Id`. Type a comma to add fields.
+
+The suggestions show readable fields. `WHERE` offers fields that can be filtered, and `ORDER BY` offers fields that can be sorted. Operators match the field type. Core still checks the complete query when you save.
+
+Subqueries get suggestions too. Type `(` in the `SELECT` list, or after `IN` or `NOT IN` on an Id or lookup field, and choose `SELECT`.
+
+- In a child subquery, such as `(SELECT LastName FROM Contacts)`, `FROM` offers the child relationships of the main object, and the other clauses offer the child object's fields. Write the main query's `FROM` first, because the child relationships come from that object. `LIMIT` offers its own input, such as `:maxContacts`, so it does not share the main query's `:maxRecords`. `OFFSET` is not offered, because Salesforce refuses it in most child subqueries.
+- In a `WHERE` subquery, such as `Id IN (SELECT AccountId FROM Case)`, `FROM` searches objects, and the `SELECT` list offers only Id and lookup fields.
+- You can add a subquery inside an existing query before you type its closing `)`.
+
+While you write the query, the input preview keeps updating. Query errors appear when you leave the query box or click **Save**, so choosing `SELECT` does not show an error before you finish writing the query.
+
+1. Select a suggestion with the arrow keys or by pointing at it with the mouse. When you have typed part of a word and only one suggestion fits, it is already selected.
+2. Press Enter to insert the selected suggestion. With no suggestion selected, Enter starts a new line. Shift+Enter always starts a new line. Tab inserts the first suggestion if none is selected. Shift+Tab moves to the previous field.
+3. Press Esc to close suggestions. Press Ctrl+Space to open them again.
+
+If objects, fields, or child relationships cannot load, the query stays unchanged and the editor shows what failed. Click **Retry** or press Ctrl+Space to retry. No matching fields and unknown relationship paths have separate messages. An object you cannot read never offers its fields.
+
+Suggestions make no model calls. Object searches wait until you stop typing for 250 milliseconds. Field and child relationship requests for the same object share a pending request and reuse successful results while the editor is open. Save-time validation and the query's runtime cost are unchanged.
+
 ## Run values
 
 Core fills in these names itself. The agent never fills them in, and they are not inputs.

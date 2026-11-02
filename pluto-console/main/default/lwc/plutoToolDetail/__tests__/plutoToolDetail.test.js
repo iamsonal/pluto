@@ -94,22 +94,19 @@ describe('c-pluto-tool-detail', () => {
 
         const form = element.shadowRoot.querySelector('c-pluto-record-layout');
         expect(form.hiddenFields).toEqual(['ToolType__c', 'ImplementationType__c', 'ImplementationConfiguration__c', 'InputSchema__c']);
-        expect(form.additionalFields).toEqual([{ fieldApiName: 'ApprovalRoute__c', before: 'ApprovalTimeoutHours__c' }]);
+        expect(form.additionalFields).toEqual([{ fieldApiName: 'ApprovalRoute__c', after: 'ApproverQueue__c' }]);
         expect(form.fieldDependencies).toEqual([
-            { controllingField: 'RequiresApproval__c', controllingValue: true, requiredFields: ['ApproverType__c'] },
+            { controllingField: 'ApprovalMode__c', controllingValue: 'Always Required', showFields: ['ApproverType__c'], requiredFields: ['ApproverType__c'] },
+            {
+                controllingField: 'ApprovalMode__c',
+                controllingValue: ['Always Required', 'Decided by Policy'],
+                showFields: ['ApprovalTimeoutMinutes__c', 'ApprovalExpiryAction__c', 'ApprovalRoute__c'],
+                requiredFields: ['ApprovalExpiryAction__c']
+            },
             { controllingField: 'ApproverType__c', controllingValue: 'User', showFields: ['ApproverUser__c'], requiredFields: ['ApproverUser__c'] },
             { controllingField: 'ApproverType__c', controllingValue: ['Queue', 'Anchor Record Owner'], showFields: ['ApproverQueue__c'] },
             { controllingField: 'ApproverType__c', controllingValue: 'Queue', requiredFields: ['ApproverQueue__c'] },
-            {
-                controllingField: 'ApproverType__c',
-                controllingValue: ['User', 'Queue', 'Anchor Record Owner', "Requester's Manager", 'Delivery Channel'],
-                showFields: ['ApprovalTimeoutHours__c', 'ApprovalExpiryAction__c']
-            },
-            {
-                controllingField: 'ApproverType__c',
-                controllingValue: ['User', 'Queue', 'Anchor Record Owner', "Requester's Manager"],
-                showFields: ['ApprovalRoute__c']
-            }
+            { controllingField: 'ApproverType__c', controllingValue: 'Approval Process', hideFields: ['ApprovalRoute__c'] }
         ]);
 
         form.setFieldValue('ApproverUser__c', '005000000000000AAA');
@@ -138,7 +135,10 @@ describe('c-pluto-tool-detail', () => {
         getApproverQueueOptions.emit([{ label: 'Review Team (Review_Team)', value: 'Review_Team' }]);
         await Promise.resolve();
         const form = element.shadowRoot.querySelector('c-pluto-record-layout');
-        expect(form.fieldOptions.ApproverQueue__c).toEqual([{ label: 'Review Team (Review_Team)', value: 'Review_Team' }]);
+        expect(form.fieldOptions.ApproverQueue__c).toEqual([
+            { label: 'None', value: '' },
+            { label: 'Review Team (Review_Team)', value: 'Review_Team' }
+        ]);
     });
 
     it('keeps a picklist when no eligible queues exist or discovery fails', async () => {
@@ -153,29 +153,82 @@ describe('c-pluto-tool-detail', () => {
         await Promise.resolve();
         expect(form.fieldOptions.ApproverQueue__c).toEqual([{ label: 'Queues unavailable', value: '' }]);
     });
-    it('keeps the approver when Always Require Approval is cleared, for calls a policy sends for approval', async () => {
+    it('clears the settings each Approval Mode choice does not use', async () => {
         const element = createElement('c-pluto-tool-detail', { is: PlutoToolDetail });
         element.isNew = true;
         document.body.appendChild(element);
         await Promise.resolve();
         const form = element.shadowRoot.querySelector('c-pluto-record-layout');
-        const approvalFields = ['ApproverType__c', 'ApproverQueue__c', 'ApprovalRoute__c', 'ApprovalTimeoutHours__c', 'ApprovalExpiryAction__c'];
-        approvalFields.forEach((field) => form.setFieldValue(field, 'kept'));
-        form.dispatchEvent(new CustomEvent('fieldchange', { detail: { fieldName: 'RequiresApproval__c', value: false } }));
-        approvalFields.forEach((field) => expect(form.getFieldValue(field)).toBe('kept'));
-        expect(form.fieldDependencies.some((dependency) => dependency.hideFields?.includes('ApproverType__c'))).toBe(false);
+        const approverFields = ['ApproverType__c', 'ApproverUser__c', 'ApproverQueue__c'];
+        const waitFields = ['ApprovalTimeoutMinutes__c', 'ApprovalExpiryAction__c', 'ApprovalRoute__c'];
+        [...approverFields, ...waitFields].forEach((field) => form.setFieldValue(field, 'kept'));
+
+        form.dispatchEvent(new CustomEvent('fieldchange', { detail: { fieldName: 'ApprovalMode__c', value: 'Decided by Policy' } }));
+        approverFields.forEach((field) => expect(form.getFieldValue(field)).toBeNull());
+        waitFields.forEach((field) => expect(form.getFieldValue(field)).toBe('kept'));
+
+        form.dispatchEvent(new CustomEvent('fieldchange', { detail: { fieldName: 'ApprovalMode__c', value: 'Not Required' } }));
+        waitFields.forEach((field) => expect(form.getFieldValue(field)).toBeNull());
         expect(form.requiredFields).toContain('DeveloperName__c');
         expect(element.shadowRoot.querySelector('c-tool-authoring-editor').parentElement.getAttribute('slot')).toBe('form-sections-after');
     });
 
-    it('clears a notification route when the approval is delivered through a channel', async () => {
+    it('clears the notification route when an approval process decides', async () => {
         const element = createElement('c-pluto-tool-detail', { is: PlutoToolDetail });
         element.isNew = true;
         document.body.appendChild(element);
         await Promise.resolve();
         const form = element.shadowRoot.querySelector('c-pluto-record-layout');
+        form.setFieldValue('ApprovalMode__c', 'Always Required');
+        form.setFieldValue('ApprovalExpiryAction__c', 'Deny and Continue');
         form.setFieldValue('ApprovalRoute__c', 'old-route');
-        form.dispatchEvent(new CustomEvent('fieldchange', { detail: { fieldName: 'ApproverType__c', value: 'Delivery Channel' } }));
+
+        form.dispatchEvent(new CustomEvent('fieldchange', { detail: { fieldName: 'ApproverType__c', value: 'Approval Process' } }));
+
         expect(form.getFieldValue('ApprovalRoute__c')).toBeNull();
+        expect(form.getFieldValue('ApprovalExpiryAction__c')).toBe('Deny and Continue');
+    });
+
+    it('keeps the notification route for approvers who decide in Salesforce', async () => {
+        const element = createElement('c-pluto-tool-detail', { is: PlutoToolDetail });
+        element.isNew = true;
+        document.body.appendChild(element);
+        await Promise.resolve();
+        const form = element.shadowRoot.querySelector('c-pluto-record-layout');
+        form.setFieldValue('ApprovalMode__c', 'Always Required');
+        form.setFieldValue('ApprovalRoute__c', 'route');
+        form.setFieldValue('ApproverType__c', 'Anchor Record Owner');
+
+        form.dispatchEvent(new CustomEvent('fieldchange', { detail: { fieldName: 'ApproverType__c', value: 'Anchor Record Owner' } }));
+        expect(form.getFieldValue('ApprovalRoute__c')).toBe('route');
+
+        form.dispatchEvent(new CustomEvent('fieldchange', { detail: { fieldName: 'ApprovalMode__c', value: 'Decided by Policy' } }));
+        expect(form.getFieldValue('ApprovalRoute__c')).toBe('route');
+        expect(form.getFieldValue('ApproverType__c')).toBeNull();
+    });
+
+    it('clears hidden approval values the saved choices do not use', async () => {
+        saveTool.mockResolvedValue('a00000000000000AAA');
+        const element = createElement('c-pluto-tool-detail', { is: PlutoToolDetail });
+        element.isNew = true;
+        document.body.appendChild(element);
+        await Promise.resolve();
+        const form = element.shadowRoot.querySelector('c-pluto-record-layout');
+        const editor = element.shadowRoot.querySelector('c-tool-authoring-editor');
+        editor.prepareDraft = jest.fn(() => ({ toolType: 'QueryRecords', implementationConfiguration: '{}', inputSchema: null }));
+        editor.reload = jest.fn();
+        form.completeSave = jest.fn();
+        // Stored before the rules changed, and hidden by the current choices.
+        form.setFieldValue('ApprovalMode__c', 'Always Required');
+        form.setFieldValue('ApproverType__c', 'Approval Process');
+        form.setFieldValue('ApprovalExpiryAction__c', 'Deny and Continue');
+        form.setFieldValue('ApprovalRoute__c', 'stale-route');
+        form.setFieldValue('ApproverUser__c', '005000000000000AAA');
+
+        form.dispatchEvent(new CustomEvent('saverequest', { detail: { recordInput: { fields: { Name: 'Refund' } } } }));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(saveTool).toHaveBeenCalledWith(expect.objectContaining({ header: { Name: 'Refund', ApprovalRoute__c: null, ApproverUser__c: null } }));
     });
 });

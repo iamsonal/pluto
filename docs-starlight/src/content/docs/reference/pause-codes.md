@@ -14,10 +14,10 @@ A paused run shows its code in **Error Code**. After you fix the cause, rescue t
 | `MODEL_REFUSED` | The model refused to answer. | Read the run story. Rescue with guidance, or cancel. |
 | `DISPATCH_UNDELIVERABLE` | Core tried three times, waiting longer each time, to start the next step as the execution user and could not. | Check that the execution user is active and that **Verify** passes on its identity. Make sure whoever continues runs can use the Named Credential. Then rescue. |
 | `UNKNOWN_UNRESOLVED` | Nobody reconciled an Unknown call before the run's payload retention ended. | Reconcile the call, or cancel the run. See [Settle an Unknown call](/operate/unknown/). |
-| `WAIT_EXPIRED` | An outside wait, or an approval set to **Pause for Operator**, ran out of time. | Rescue to let the agent continue without it, or cancel. |
+| `WAIT_EXPIRED` | An outside wait, or an approval set to **Pause for Operator**, ran out of time. | For an outside wait, rescue to let the agent continue without it, or cancel. For an approval, rescue to ask for approval again with a new deadline (the same approver, or the policy decides again), or cancel. The tool did not run. Rescue guidance does not reach the agent here, because the call goes straight back to waiting. |
 | `TOOL_BINDING_CHANGED` | A tool changed or was deactivated after the call started. | Restore the tool as it was, or cancel the run and start a new one. |
-| `TOOL_AUTHORIZATION_POLICY_INVALID` | The agent's policy asked for approval with no reason or a deadline out of range. | Fix the policy class, then rescue. |
-| `APPROVAL_ASSIGNMENT_UNRESOLVED` | Nobody eligible could be found to approve the call. | Set Approver Type, Approver User, or Approver Queue on the tool, then rescue. |
+| `TOOL_AUTHORIZATION_POLICY_INVALID` | The agent's policy asked for approval without naming a user or queue, with no reason, or with a deadline out of range. A tool whose Approval Mode is Decided by Policy also pauses with this code when its agent has no policy class. | Fix the policy class, then rescue. |
+| `APPROVAL_ASSIGNMENT_UNRESOLVED` | Nobody eligible could be found to approve the call. | For an Always Required tool, fix Approver Type, Approver User, or Approver Queue. For Approval Process, assign `AgentKernelApprovalRelay` to the relay user. For a Decided by Policy tool, fix the queue or user the policy names. Then rescue. |
 | `INITIATING_USER_APPROVAL_UNSUPPORTED` | A call needed approval, but the agent has no execution identity. | Give the agent an identity, or change the policy. Then start a new run. |
 
 ## Tool call results the agent sees

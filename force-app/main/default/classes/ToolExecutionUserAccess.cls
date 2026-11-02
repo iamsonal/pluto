@@ -12,12 +12,13 @@
  */
 
 /**
- * Checks that an agent's execution user can read, create,
- * or edit what a standard record tool's configuration names. Runs when a tool
- * is saved and in the Validate report, so a missing permission shows up at
- * setup instead of failing the tool in a run. Custom Apex and Flow tools are
- * not checked: Core cannot see what they read. Agents without an identity are not
- * checked: nobody knows in advance who will run them.
+ * Checks that an agent's execution user can read, create, or edit what a
+ * standard record tool's configuration names. Runs only in Validate, because
+ * access changes after a tool is saved and admins often grant it afterwards.
+ * Saving never depends on it, and a run is still refused by the platform when
+ * access is missing. Custom Apex and Flow tools are not checked: Core cannot
+ * see what they read. Agents without an identity are not checked: nobody
+ * knows in advance who will run them.
  */
 @SuppressWarnings('PMD.ApexCRUDViolation')
 public without sharing class ToolExecutionUserAccess {

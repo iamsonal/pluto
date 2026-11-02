@@ -60,6 +60,8 @@ export default class ToolAuthoringEditor extends LightningElement {
     showRequired = false;
     _describeTimer = null;
     _describeVersion = 0;
+    _queryEditing = false;
+    _querySaveAttempted = false;
     /** True from a change until Core's answer for it arrives; the view shown until then is for the old draft. */
     checking = false;
     /**
@@ -111,6 +113,8 @@ export default class ToolAuthoringEditor extends LightningElement {
             return;
         }
         this.isLoading = true;
+        this._queryEditing = false;
+        this._querySaveAttempted = false;
         try {
             const state = await loadTool({ toolId: this.recordId });
             this.toolType = state.toolType || '';
@@ -252,7 +256,9 @@ export default class ToolAuthoringEditor extends LightningElement {
      */
     showProblems() {
         const problems = this.view?.problems || [];
-        this.shownProblems = this.requiredSettingMissing && !this.showRequired ? problems.filter((problem) => problem.target === 'toolType') : problems;
+        const visible = this.requiredSettingMissing && !this.showRequired ? problems.filter((problem) => problem.target === 'toolType') : problems;
+        this.shownProblems =
+            this._queryEditing && !this._querySaveAttempted ? visible.filter((problem) => !['settings', 'inputSchema'].includes(problem.target)) : visible;
     }
 
     get requiredSettingMissing() {
@@ -317,6 +323,8 @@ export default class ToolAuthoringEditor extends LightningElement {
             return;
         }
         this.chosenImplementationType = next;
+        this._queryEditing = false;
+        this._querySaveAttempted = false;
         this.toolType = '';
         this.settings = {};
         this.inputSchema = '';
@@ -347,6 +355,8 @@ export default class ToolAuthoringEditor extends LightningElement {
         }
         this.chosenImplementationType = this.implementationType;
         this.toolType = next;
+        this._queryEditing = false;
+        this._querySaveAttempted = false;
         this.settings = {};
         this.inputSchema = '';
         this.view = null;
@@ -357,6 +367,9 @@ export default class ToolAuthoringEditor extends LightningElement {
     async handleSettingChange(event) {
         const { name, value, revert } = event.detail;
         const setting = this.declaredSettings.find((candidate) => candidate.name === name);
+        if (setting?.type?.toLowerCase() === 'query') {
+            this._querySaveAttempted = false;
+        }
         const dependents = this.declaredSettings.filter((candidate) => candidate.objectSetting === name);
         const next = { ...this.settings };
         if (setting?.type === 'object' && value !== this.settings[name]) {
@@ -379,7 +392,22 @@ export default class ToolAuthoringEditor extends LightningElement {
         }
         this.assign(next, name, value);
         this.settings = next;
+        if (this._queryEditing) {
+            this.showProblems();
+        }
         this.scheduleDescribe(this.isTyped(setting) ? TYPING_DELAY : DESCRIBE_DELAY);
+    }
+
+    handleQueryEditingChange(event) {
+        const setting = this.declaredSettings.find((candidate) => candidate.name === event.detail.name);
+        if (setting?.type?.toLowerCase() !== 'query') {
+            return;
+        }
+        this._queryEditing = event.detail.editing;
+        // A pending check still describes the previous text. Show its replacement when it arrives.
+        if (this._queryEditing || !this.checking) {
+            this.showProblems();
+        }
     }
 
     handleSettingsReplace(event) {
@@ -475,6 +503,8 @@ export default class ToolAuthoringEditor extends LightningElement {
     /** The draft for the hosting page's one save, or null when a required setting is empty. */
     @api
     prepareDraft() {
+        this._querySaveAttempted = true;
+        this.showProblems();
         if (!this.toolType) {
             this.showRequired = true;
             return null;

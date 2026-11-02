@@ -457,6 +457,10 @@ export default class ToolSettingsForm extends LightningElement {
         this.change(event.target.dataset.name, value.trim() ? value : undefined);
     }
 
+    handleQueryEditingChange(event) {
+        this.dispatchEvent(new CustomEvent('queryeditingchange', { detail: { name: event.target.dataset.name, editing: event.detail.editing } }));
+    }
+
     handleTextListChange(event) {
         const values = (event.detail.value || '')
             .split('\n')
