@@ -61,8 +61,8 @@ and their dependencies before granting them execution.
 - Pass protected-value tokens such as `{{EMAIL_3_9f2c61ab}}` through
   unchanged.
 - Send each tool's `inputSchema` as written, including the `_rationale`
-  property Core adds to reviewable tools and replayed calls. Core records it
-  as the call's reason.
+  property Core adds to every tool and replayed call. Core records it as the
+  call's reason.
 - When `ModelRequest.allowMultipleToolCalls` is `false`, request at most one
   tool call (for example OpenAI's `parallel_tool_calls: false`). Core answers a batch with
   `TOOL_BATCH_NOT_ALLOWED` and asks again. `null` allows several.
@@ -101,7 +101,7 @@ the class name.
 
 - Set `Tool Class` to the class and keep `Implementation Type` at `Apex`.
   `Standard` and `Flow` mark Core's own types, listed in
-  [Tool types](https://iamsonal.github.io/aiAgentStudio/reference/generated/tool-types/).
+  [Tool types](https://iamsonal.github.io/pluto/reference/generated/tool-types/).
 - Set `Effects`. It is required:
     - `Stays in This Org` when the tool only reads or changes this org's records.
     - `Reads Outside Systems` when it calls outside systems but only reads,
@@ -203,7 +203,7 @@ Input and output:
 - Every executable input schema, including nested objects, must set
   `additionalProperties: false`.
 - Do not declare a top-level input named `_rationale`. Core adds it to
-  reviewable tools and strips it before validation.
+  every tool and strips it before validation.
 - Return a bounded `ToolResponse` with `output` or `recordSets`, not both.
   Structured output allows at most 10 named sets and 200 records, before
   Core's stricter serialization and trust checks.
@@ -244,8 +244,7 @@ Errors and outcomes:
   handles failures as it does for `Stays in This Org`: a callout failure or lost
   worker repeats the call within the run's retry limits, an unexpected
   exception returns to the model, and a malformed response pauses the run.
-  The tool is not asked for `_rationale` unless its Approval is
-  `Always Required` or `Decided by Policy`. A tool that throws `OutcomeUnknownException` is still `Unknown`.
+  A tool that throws `OutcomeUnknownException` is still `Unknown`.
 - `Changes Outside Systems`, or a value Core does not recognize: an
   unexpected exception, a malformed or oversized response, or a lost worker
   makes the outcome `Unknown`. Core repeats the call only when the tool asks
@@ -286,9 +285,13 @@ operation; never edit a leased command.
   A failed, invalid, or over-budget provider is omitted and recorded as
   `SkippedBudget`, `SkippedGovernorBudget`, or `Failed`.
 - Return a unique source name and exactly one of bounded text `content` or
-  bounded `recordSets`. Prefer `recordSets` for records: Core tokenizes their
-  classified fields and filters them for an attended run's person. Core omits
-  text `content` from attended runs (`WithheldForRequester`).
+  bounded `recordSets`. Return Salesforce records as `recordSets`, never
+  serialized into `content`: Core tokenizes their classified fields and
+  filters them for an attended run's person. Use `content` only for text that
+  has no field behind it, such as file text or message history. Core scans it
+  for emails, phone numbers, card numbers, US SSNs, and IBANs, but cannot see
+  field classifications in it. Core omits text `content` from attended runs
+  (`WithheldForRequester`).
 - Core enforces the aggregate context budget and caps each provider at 16,000
   characters. Oversized record sets keep whole leading records of each set
   and are marked `Truncated`, so put the most needed records first. Text
@@ -308,7 +311,7 @@ configuration blank.
 ## `IToolAuthorizationPolicy`
 
 Policies follow the same query-only rule and governor reserve as context
-providers. Core evaluates the policy only for calls of tools whose Approval is
+providers. Core evaluates the policy only for calls of tools whose Approval Mode is
 `Decided by Policy`, after it checks the call's arguments against the tool's
 Input Schema. Calls of `Not Required` and `Always Required` tools never reach it. Build the answer from the request:
 
@@ -365,7 +368,7 @@ public AgentKernelModels.ToolAuthorizationResponse evaluate(AgentKernelModels.To
   when `request.executionIdentityId` is null.
 
 Core creates the Agent Approval and decides who may approve it; see
-[Require approval](https://iamsonal.github.io/aiAgentStudio/approvals/require/).
+[Require approval](https://iamsonal.github.io/pluto/approvals/require/).
 
 ## Testing an extension
 

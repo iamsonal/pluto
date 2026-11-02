@@ -120,7 +120,8 @@ function isValueMatch(currentValue, controllingValue) {
  *
  * The layout decides which fields show. A host hides fields it owns
  * elsewhere with hiddenFields, and adds fields that optional packages put
- * on the object with additionalFields: [{ fieldApiName, before }]. Fields
+ * on the object with additionalFields: [{ fieldApiName, before }] or
+ * [{ fieldApiName, after }]. Fields
  * the user cannot see are left out.
  */
 export default class PlutoRecordLayout extends LightningElement {
@@ -419,7 +420,7 @@ export default class PlutoRecordLayout extends LightningElement {
                 columns
             };
         });
-        (this.additionalFields || []).forEach(({ fieldApiName, before }) => {
+        (this.additionalFields || []).forEach(({ fieldApiName, before, after }) => {
             if (!fields[fieldApiName] || placed.has(fieldApiName) || !sections.length) {
                 return;
             }
@@ -427,9 +428,9 @@ export default class PlutoRecordLayout extends LightningElement {
             const entry = { fieldName: fieldApiName, layoutItem: {} };
             for (const section of sections) {
                 for (const column of section.columns) {
-                    const index = column.findIndex((item) => item.fieldName === before);
+                    const index = column.findIndex((item) => item.fieldName === (after || before));
                     if (index >= 0) {
-                        column.splice(index, 0, entry);
+                        column.splice(after ? index + 1 : index, 0, entry);
                         return;
                     }
                 }

@@ -295,6 +295,9 @@ global without sharing class TrustService {
         if (requesterId != null) {
             state.requesterView = new RequesterView(requesterId, readableSets.values());
         }
+        if (context != null) {
+            hydrateClassifiedFingerprints(context, readableSets.values());
+        }
         Map<String, Object> protectedSets = new Map<String, Object>();
         for (String sourceName : readableSets.keySet()) {
             List<Object> serializedRecords = new List<Object>();
@@ -863,6 +866,41 @@ global without sharing class TrustService {
             return;
         }
         hydrate(context, queryMappingsByFingerprints(context.runId, fingerprints));
+    }
+
+    /** Loads the run's tokens for classified values, so the same value keeps one token across model calls. */
+    private static void hydrateClassifiedFingerprints(ProtectionContext context, List<List<SObject>> recordSets) {
+        Set<String> fingerprints = new Set<String>();
+        for (List<SObject> records : recordSets) {
+            collectClassifiedFingerprints(context, records, 0, fingerprints);
+        }
+        fingerprints.removeAll(context.tokensByFingerprint.keySet());
+        if (!fingerprints.isEmpty()) {
+            hydrate(context, queryMappingsByFingerprints(context.runId, fingerprints));
+        }
+    }
+
+    private static void collectClassifiedFingerprints(ProtectionContext context, List<SObject> records, Integer depth, Set<String> fingerprints) {
+        if (records == null || depth > MAX_STRUCTURED_DEPTH) {
+            return;
+        }
+        for (SObject record : records) {
+            if (record == null) {
+                continue;
+            }
+            String objectApiName = record.getSObjectType().getDescribe().getName();
+            Map<String, Object> populated = record.getPopulatedFieldsAsMap();
+            for (String fieldName : populated.keySet()) {
+                Object value = populated.get(fieldName);
+                if (value instanceof List<SObject>) {
+                    collectClassifiedFingerprints(context, (List<SObject>) value, depth + 1, fingerprints);
+                } else if (value instanceof SObject) {
+                    collectClassifiedFingerprints(context, new List<SObject>{ (SObject) value }, depth + 1, fingerprints);
+                } else if (value != null && SchemaFieldClassificationService.isSensitive(objectApiName, fieldName)) {
+                    fingerprints.add(fingerprint(context.runId, CATEGORY_SALESFORCE_CLASSIFIED, String.valueOf(value)));
+                }
+            }
+        }
     }
 
     private static void collectFingerprints(

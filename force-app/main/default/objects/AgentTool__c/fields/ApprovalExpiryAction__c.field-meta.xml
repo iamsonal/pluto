@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>ApprovalExpiryAction__c</fullName>
-    <description>What Core does when nobody decides in time. The tool never runs after an expired approval. Required when Approval is Always Required or Decided by Policy, and blank when it is Not Required.</description>
+    <description>What Core does when nobody decides in time. The tool never runs after an expired approval. Required when Approval Mode is Always Required or Decided by Policy, and blank when it is Not Required.</description>
     <inlineHelpText>Required when calls can wait for approval. Deny and Continue tells the agent the call was not approved and lets it continue. Pause for Operator pauses the run for an administrator.</inlineHelpText>
     <label>When Approval Expires</label>
     <required>false</required>

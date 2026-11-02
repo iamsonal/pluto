@@ -10,8 +10,8 @@
                 "path": "unpackagedMetadata"
             },
             "versionDescription": "Runs AI agents in Salesforce: model calls, tools, approvals, recovery, and a record of every run. Install it first.",
-            "postInstallUrl": "https://iamsonal.github.io/aiAgentStudio/start/install/#turn-on-cores-schedules",
-            "releaseNotesUrl": "https://github.com/iamsonal/aiAgentStudio/releases"
+            "postInstallUrl": "https://iamsonal.github.io/pluto/start/install/#turn-on-cores-schedules",
+            "releaseNotesUrl": "https://github.com/iamsonal/pluto/releases"
         },
         {
             "versionName": "Pluto Model Adapters 2.0",
@@ -26,8 +26,8 @@
                     "versionNumber": "2.0.0.LATEST"
                 }
             ],
-            "postInstallUrl": "https://iamsonal.github.io/aiAgentStudio/setup/model/",
-            "releaseNotesUrl": "https://github.com/iamsonal/aiAgentStudio/releases"
+            "postInstallUrl": "https://iamsonal.github.io/pluto/setup/model/",
+            "releaseNotesUrl": "https://github.com/iamsonal/pluto/releases"
         },
         {
             "path": "packages/agent-testing-kit",
@@ -65,8 +65,8 @@
             "unpackagedMetadata": {
                 "path": "unpackagedMetadata"
             },
-            "postInstallUrl": "https://iamsonal.github.io/aiAgentStudio/setup/pluto/",
-            "releaseNotesUrl": "https://github.com/iamsonal/aiAgentStudio/releases"
+            "postInstallUrl": "https://iamsonal.github.io/pluto/setup/pluto/",
+            "releaseNotesUrl": "https://github.com/iamsonal/pluto/releases"
         }
     ],
     "name": "aiAgentStudio",

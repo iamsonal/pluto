@@ -49,6 +49,13 @@ public with sharing class ToolTryController {
         /** Why the tool needs that record, in the admin's words; null when it does not. */
         @AuraEnabled
         public String recordHelp { get; set; }
+        /**
+         * What the agent's execution user cannot read, create, or edit for
+         * this tool, or null. A dry run runs as the admin, so it can succeed
+         * where the agent would be refused.
+         */
+        @AuraEnabled
+        public String executionUserAccess { get; set; }
     }
 
     public class TryResult {
@@ -92,6 +99,10 @@ public with sharing class ToolTryController {
         state.inputSchema = ToolSchemaService.effectiveSchema(tool).schema;
         state.recordHelp = recordHelp(tool);
         state.needsRecord = state.recordHelp != null;
+        state.executionUserAccess = ToolExecutionUserAccess.problem(
+            tool,
+            ToolExecutionUserAccess.executionUsers(new Set<Id>{ tool.AgentDefinition__c }).get(tool.AgentDefinition__c)
+        );
         return state;
     }
 

@@ -39,3 +39,8 @@
 .query-option-value {
     font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
+
+/* Only the selected option is highlighted. SLDS gives hover the same grey, which looked selected to Enter. */
+.query-suggestions .slds-listbox__option:hover:not(.slds-has-focus) {
+    background-color: transparent;
+}

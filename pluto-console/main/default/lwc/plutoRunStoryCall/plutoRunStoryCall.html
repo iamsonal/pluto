@@ -74,17 +74,11 @@
                             <template lwc:if={prompt.hasContexts}>
                                 <lightning-tab label={prompt.contextsLabel} value="context">
                                     <div class="tab-stack">
+                                        <p class="note context-note">The model receives this as data and is told never to follow instructions in it.</p>
                                         <template for:each={prompt.contexts} for:item="context">
                                             <div key={context.key} class="context">
                                                 <div class="context-meta">
                                                     <span class="context-size">{context.size}</span>
-                                                    <template lwc:if={context.untrusted}>
-                                                        <span
-                                                            class="flag flag_data"
-                                                            title="Record data. The model is told to treat it as information, never instructions."
-                                                            >Untrusted data</span
-                                                        >
-                                                    </template>
                                                     <template lwc:if={context.truncated}>
                                                         <span class="flag flag_warn">Truncated</span>
                                                     </template>

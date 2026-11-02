@@ -18,14 +18,45 @@ import saveTool from '@salesforce/apex/ToolAuthoringController.saveTool';
 import getApproverQueueOptions from '@salesforce/apex/PlutoImplementationDiscoveryService.getApproverQueueOptions';
 // The embedded editor owns and shows the implementation type, tool type, settings, and input schema.
 const EDITOR_FIELDS = ['ToolType__c', 'ImplementationType__c', 'ImplementationConfiguration__c', 'InputSchema__c'];
-// Agent HITL adds Approval Route to the tool; it shows only where HITL is installed.
-const PACKAGE_FIELDS = [{ fieldApiName: 'ApprovalRoute__c', before: 'ApprovalTimeoutMinutes__c' }];
+// Agent HITL adds Approval Notice to the tool; it shows only where HITL is installed.
+// It follows the approver fields: who decides, then how they hear.
+const PACKAGE_FIELDS = [{ fieldApiName: 'ApprovalRoute__c', after: 'ApproverQueue__c' }];
 
 const ALWAYS_REQUIRED = 'Always Required';
 const DECIDED_BY_POLICY = 'Decided by Policy';
 const CAN_WAIT = [ALWAYS_REQUIRED, DECIDED_BY_POLICY];
+const APPROVAL_PROCESS = 'Approval Process';
+const QUEUE_APPROVERS = ['Queue', 'Anchor Record Owner'];
 const APPROVER_FIELDS = ['ApproverType__c', 'ApproverUser__c', 'ApproverQueue__c'];
 const WAIT_FIELDS = ['ApprovalTimeoutMinutes__c', 'ApprovalExpiryAction__c', 'ApprovalRoute__c'];
+const NO_QUEUE = { label: 'None', value: '' };
+
+/**
+ * Approval fields the chosen Approval Mode and Approver Type do not use.
+ * Core refuses a save that fills them, and the page hides them, so they are
+ * cleared rather than kept out of sight.
+ */
+function unusedApprovalFields(approvalMode, approverType) {
+    const unused = [];
+    if (approvalMode !== ALWAYS_REQUIRED) {
+        unused.push(...APPROVER_FIELDS);
+    } else {
+        if (approverType !== 'User') {
+            unused.push('ApproverUser__c');
+        }
+        if (!QUEUE_APPROVERS.includes(approverType)) {
+            unused.push('ApproverQueue__c');
+        }
+        // An approval process sends its own notices.
+        if (approverType === APPROVAL_PROCESS) {
+            unused.push('ApprovalRoute__c');
+        }
+    }
+    if (!CAN_WAIT.includes(approvalMode)) {
+        unused.push(...WAIT_FIELDS);
+    }
+    return unused;
+}
 // The tool names its approver only for Always Required; for Decided by Policy the policy names one.
 const FIELD_DEPENDENCIES = [
     {
@@ -37,7 +68,8 @@ const FIELD_DEPENDENCIES = [
     {
         controllingField: 'ApprovalMode__c',
         controllingValue: CAN_WAIT,
-        showFields: ['ApprovalTimeoutMinutes__c', 'ApprovalExpiryAction__c'],
+        // Approval Notice is placed only where Agent HITL is installed.
+        showFields: ['ApprovalTimeoutMinutes__c', 'ApprovalExpiryAction__c', 'ApprovalRoute__c'],
         requiredFields: ['ApprovalExpiryAction__c']
     },
     {
@@ -49,7 +81,7 @@ const FIELD_DEPENDENCIES = [
     {
         // Anchor Record Owner may name an optional fallback queue for when the owner cannot decide.
         controllingField: 'ApproverType__c',
-        controllingValue: ['Queue', 'Anchor Record Owner'],
+        controllingValue: QUEUE_APPROVERS,
         showFields: ['ApproverQueue__c']
     },
     {
@@ -58,14 +90,10 @@ const FIELD_DEPENDENCIES = [
         requiredFields: ['ApproverQueue__c']
     },
     {
+        // An approval process sends its own notices, so it takes no route.
         controllingField: 'ApproverType__c',
-        controllingValue: ['User', 'Queue', 'Anchor Record Owner', "Requester's Manager"],
-        showFields: ['ApprovalRoute__c']
-    },
-    {
-        controllingField: 'ApprovalMode__c',
-        controllingValue: DECIDED_BY_POLICY,
-        showFields: ['ApprovalRoute__c']
+        controllingValue: APPROVAL_PROCESS,
+        hideFields: ['ApprovalRoute__c']
     }
 ];
 
@@ -109,8 +137,9 @@ export default class PlutoToolDetail extends LightningElement {
 
     get fieldOptions() {
         return {
+            // None lets an admin remove Anchor Record Owner's optional fallback queue.
             ApproverQueue__c: this.approverQueues.length
-                ? this.approverQueues
+                ? [NO_QUEUE, ...this.approverQueues]
                 : [
                       {
                           label: this.queueLoadFailed ? 'Queues unavailable' : this.queuesLoaded ? 'No queues support Agent Approval' : 'Loading queues…',
@@ -137,32 +166,16 @@ export default class PlutoToolDetail extends LightningElement {
     }
 
     handleFieldChange(event) {
-        const form = this.template.querySelector('c-pluto-record-layout');
         const { fieldName, value } = event.detail || {};
-        const inactiveFields = [];
-        if (fieldName === 'ApprovalMode__c') {
-            if (value !== ALWAYS_REQUIRED) {
-                inactiveFields.push(...APPROVER_FIELDS);
-            }
-            if (!CAN_WAIT.includes(value)) {
-                inactiveFields.push(...WAIT_FIELDS);
-            }
-        } else if (fieldName === 'ApproverType__c') {
-            if (value !== 'User') {
-                inactiveFields.push('ApproverUser__c');
-            }
-            if (value !== 'Queue' && value !== 'Anchor Record Owner') {
-                inactiveFields.push('ApproverQueue__c');
-            }
-            if (value === 'Delivery Channel') {
-                inactiveFields.push('ApprovalRoute__c');
-            }
+        if (fieldName !== 'ApprovalMode__c' && fieldName !== 'ApproverType__c') {
+            return;
         }
-        inactiveFields.forEach((inactive) => {
-            if (form?.getFieldValue(inactive)) {
-                form.setFieldValue(inactive, null);
-            }
-        });
+        const form = this.template.querySelector('c-pluto-record-layout');
+        const approvalMode = fieldName === 'ApprovalMode__c' ? value : form?.getFieldValue('ApprovalMode__c');
+        const approverType = fieldName === 'ApproverType__c' ? value : form?.getFieldValue('ApproverType__c');
+        unusedApprovalFields(approvalMode, approverType)
+            .filter((unused) => unused !== fieldName && form?.getFieldValue(unused))
+            .forEach((unused) => form.setFieldValue(unused, null));
     }
 
     handleEdit() {
@@ -183,9 +196,17 @@ export default class PlutoToolDetail extends LightningElement {
             form?.failSave({ message: 'Choose a Tool Type, fill in its required settings, and fix the inputs marked in red before saving.' });
             return;
         }
+        // A stored value the current choices do not use is hidden, so the admin
+        // could not clear it; clear it here so Core does not refuse the save.
+        const header = { ...event.detail.recordInput.fields };
+        unusedApprovalFields(form?.getFieldValue('ApprovalMode__c'), form?.getFieldValue('ApproverType__c'))
+            .filter((unused) => form?.getFieldValue(unused))
+            .forEach((unused) => {
+                header[unused] = null;
+            });
         try {
             const recordId = await saveTool({
-                header: event.detail.recordInput.fields,
+                header,
                 toolType: draft.toolType,
                 implementationConfiguration: draft.implementationConfiguration,
                 inputSchema: draft.inputSchema

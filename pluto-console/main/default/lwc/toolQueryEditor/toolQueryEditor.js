@@ -48,7 +48,6 @@ const MIRRORED_STYLES = [
  * querychange event.
  */
 export default class ToolQueryEditor extends LightningElement {
-    @api disabled = false;
     @api label = 'SOQL Query';
     @api required = false;
 
@@ -57,13 +56,30 @@ export default class ToolQueryEditor extends LightningElement {
     suggestions = [];
     suggestionMessage = '';
     suggestionStyle = '';
-    activeIndex = 0;
+    activeIndex = -1;
+    canRetry = false;
+    _starterPrefix = null;
     _replaceFrom = 0;
     _replaceTo = 0;
     _suggestVersion = 0;
     _fieldsByObject = new Map();
     _childrenByObject = new Map();
     _objectSearchTimer = null;
+    _disabled = false;
+    _suggestionContext = null;
+    _pendingDescribes = new Map();
+
+    @api
+    get disabled() {
+        return this._disabled;
+    }
+
+    set disabled(next) {
+        this._disabled = Boolean(next);
+        if (this._disabled) {
+            this.closeSuggestions();
+        }
+    }
 
     @api
     get value() {
@@ -73,12 +89,14 @@ export default class ToolQueryEditor extends LightningElement {
     set value(next) {
         const text = next === null || next === undefined ? '' : String(next);
         if (text !== this.query) {
+            this.closeSuggestions();
             this.query = text;
+            this._starterPrefix = null;
         }
     }
 
     disconnectedCallback() {
-        clearTimeout(this._objectSearchTimer);
+        this.closeSuggestions();
     }
 
     notifyChange() {
@@ -115,24 +133,31 @@ export default class ToolQueryEditor extends LightningElement {
     }
 
     get activeOptionId() {
-        return this.suggestions.length ? `query-option-${this.activeIndex}` : null;
+        return this.activeIndex >= 0 && this.suggestions.length ? `query-option-${this.activeIndex}` : null;
     }
 
     get suggestionStatus() {
         if (!this.suggestions.length) {
             return this.suggestionMessage;
         }
+        const active = this.suggestions[this.activeIndex];
+        if (active) {
+            return `${active.label}, ${this.activeIndex + 1} of ${this.suggestions.length}`;
+        }
         return this.suggestions.length === 1 ? '1 suggestion' : `${this.suggestions.length} suggestions`;
     }
 
     handleQueryInput(event) {
         this.query = event.target.value;
+        if (this._starterPrefix && !this.query.startsWith(this._starterPrefix)) {
+            this._starterPrefix = null;
+        }
         this.notifyChange();
         this.refreshSuggestions();
     }
 
     handleCaretMove(event) {
-        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+        if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'ArrowUp', 'ArrowDown'].includes(event.key) && !this.matchesContext(this._suggestionContext)) {
             this.refreshSuggestions();
         }
     }
@@ -141,8 +166,34 @@ export default class ToolQueryEditor extends LightningElement {
         this.refreshSuggestions();
     }
 
-    handleQueryBlur() {
+    handleQueryFocus() {
+        if (!this.query.trim()) {
+            this.refreshSuggestions();
+        }
+        this.dispatchEvent(new CustomEvent('queryeditingchange', { detail: { editing: true } }));
+    }
+
+    handleQueryBlur(event) {
+        if (event?.relatedTarget && event.relatedTarget === this.template.querySelector('[data-query-retry]')) {
+            return;
+        }
         this.closeSuggestions();
+        this.dispatchEvent(new CustomEvent('queryeditingchange', { detail: { editing: false } }));
+    }
+
+    handleRetryMouseDown(event) {
+        event.preventDefault();
+    }
+
+    handleRetry() {
+        this.textarea?.focus();
+        this.refreshSuggestions();
+    }
+
+    handleRetryBlur(event) {
+        if (event.relatedTarget !== this.textarea) {
+            this.handleQueryBlur(event);
+        }
     }
 
     handleQueryScroll() {
@@ -182,6 +233,13 @@ export default class ToolQueryEditor extends LightningElement {
     }
 
     handleQueryKeydown(event) {
+        if (this.disabled || event.isComposing) {
+            return;
+        }
+        if (event.key === 'Tab' && event.shiftKey) {
+            this.closeSuggestions();
+            return;
+        }
         if (event.key === ' ' && event.ctrlKey) {
             event.preventDefault();
             this.refreshSuggestions();
@@ -197,15 +255,31 @@ export default class ToolQueryEditor extends LightningElement {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault();
             const step = event.key === 'ArrowDown' ? 1 : -1;
-            this.activeIndex = (this.activeIndex + step + this.suggestions.length) % this.suggestions.length;
+            this.activeIndex =
+                this.activeIndex < 0
+                    ? step === 1
+                        ? 0
+                        : this.suggestions.length - 1
+                    : (this.activeIndex + step + this.suggestions.length) % this.suggestions.length;
             this.template.querySelector(`[data-index="${this.activeIndex}"]`)?.scrollIntoView?.({ block: 'nearest' });
-        } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        } else if (
+            event.key === 'Tab' ||
+            (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && this.activeIndex >= 0)
+        ) {
             event.preventDefault();
-            this.insertSuggestion(this.activeIndex);
+            this.insertSuggestion(Math.max(0, this.activeIndex));
         } else if (event.key === 'Escape') {
             event.preventDefault();
             event.stopPropagation();
             this.closeSuggestions();
+        }
+    }
+
+    /** Selects the option under the pointer, so Enter inserts the option that looks selected. */
+    handleOptionMouseMove(event) {
+        const index = Number(event.currentTarget.dataset.index);
+        if (index !== this.activeIndex) {
+            this.activeIndex = index;
         }
     }
 
@@ -218,18 +292,30 @@ export default class ToolQueryEditor extends LightningElement {
     insertSuggestion(index) {
         const item = this.suggestions[index];
         const textarea = this.textarea;
-        if (!item || !textarea) {
+        if (!item || !this.matchesContext(this._suggestionContext)) {
+            this.closeSuggestions();
             return;
         }
-        const after = this.query.slice(this._replaceTo);
-        const spacer = item.value.endsWith('.') || item.value.endsWith(' ') || /^[\s),]/.test(after) ? '' : ' ';
-        const inserted = item.value + spacer;
+        let after = this.query.slice(this._replaceTo);
+        if (item.value.endsWith('.') && after.startsWith('.')) {
+            after = after.slice(1);
+        }
+        const returnToFields = item.objectOption && this._starterPrefix && this.query.slice(0, this._replaceFrom) === this._starterPrefix && !after.trim();
+        const value = item.insertValue || item.value;
+        const spacer = returnToFields || value.endsWith('.') || value.endsWith(' ') || /^[\s),]/.test(after) ? '' : ' ';
+        const inserted = value + spacer;
         this.query = this.query.slice(0, this._replaceFrom) + inserted + after;
+        textarea.focus();
         textarea.value = this.query;
-        const caret = this._replaceFrom + inserted.length;
+        const caret = returnToFields ? this._starterPrefix.indexOf('Id') + 2 : this._replaceFrom + inserted.length;
+        this._starterPrefix = item.insertValue ? this.query : null;
         textarea.setSelectionRange(caret, caret);
         this.notifyChange();
-        this.refreshSuggestions();
+        if (returnToFields) {
+            this.closeSuggestions();
+        } else {
+            this.refreshSuggestions();
+        }
     }
 
     closeSuggestions() {
@@ -237,32 +323,59 @@ export default class ToolQueryEditor extends LightningElement {
         clearTimeout(this._objectSearchTimer);
         this.suggestions = [];
         this.suggestionMessage = '';
+        this.canRetry = false;
+        this.activeIndex = -1;
+        this._suggestionContext = null;
+    }
+
+    matchesContext(context) {
+        const textarea = this.textarea;
+        return !!(
+            context &&
+            !this.disabled &&
+            this.isConnected &&
+            textarea &&
+            this.query === context.query &&
+            textarea.value === context.query &&
+            textarea.selectionStart === context.caret &&
+            textarea.selectionEnd === context.selectionEnd
+        );
     }
 
     /** Reads the text at the caret and shows what fits there, loading an object's fields the first time they are needed. */
     async refreshSuggestions() {
-        const version = ++this._suggestVersion;
-        clearTimeout(this._objectSearchTimer);
+        this.closeSuggestions();
+        const version = this._suggestVersion;
         const textarea = this.textarea;
         if (this.disabled || !textarea) {
             this.showResult({ items: [] });
             return;
         }
-        const context = readQueryContext(this.query, textarea.selectionStart);
+        const context = readQueryContext(this.query, textarea.selectionStart, textarea.selectionEnd);
         const fieldsOf = (objectName) => this._fieldsByObject.get(String(objectName).toLowerCase());
         const childrenOf = (objectName) => this._childrenByObject.get(String(objectName).toLowerCase());
         let result = suggest(context, fieldsOf, childrenOf);
         while (result.needsObject || result.needsChildren) {
-            await (result.needsObject
-                ? this.loadDescribe(this._fieldsByObject, result.needsObject, getFieldOptions)
-                : this.loadDescribe(this._childrenByObject, result.needsChildren, getChildRelationshipOptions));
-            if (version !== this._suggestVersion) {
+            const objectName = result.needsObject || result.needsChildren;
+            const kind = result.needsObject ? 'fields' : 'child relationships';
+            this.showResult({ message: `Loading ${kind} for ${objectName}...` }, context);
+            try {
+                await (result.needsObject
+                    ? this.loadDescribe(this._fieldsByObject, objectName, getFieldOptions)
+                    : this.loadDescribe(this._childrenByObject, objectName, getChildRelationshipOptions));
+            } catch (error) {
+                if (version === this._suggestVersion && this.matchesContext(context)) {
+                    this.showResult({ message: `Could not load ${kind} for ${objectName}. Choose Retry or press Ctrl+Space.`, retry: true }, context);
+                }
+                return;
+            }
+            if (version !== this._suggestVersion || !this.matchesContext(context)) {
                 return;
             }
             result = suggest(context, fieldsOf, childrenOf);
         }
-        if (result.searchObjects) {
-            this.showResult({ items: this.suggestions.length && this._replaceFrom === context.replaceFrom ? this.suggestions : [] }, context);
+        if (result.searchObjects !== undefined) {
+            this.showResult({ message: 'Searching objects...' }, context);
             // eslint-disable-next-line @lwc/lwc/no-async-operation
             this._objectSearchTimer = setTimeout(() => this.searchObjects(result.searchObjects, context, version), OBJECT_SEARCH_DELAY);
             return;
@@ -271,40 +384,59 @@ export default class ToolQueryEditor extends LightningElement {
     }
 
     async searchObjects(term, context, version) {
+        if (version !== this._suggestVersion || !this.matchesContext(context)) {
+            return;
+        }
         let items = [];
+        let message = '';
+        let retry = false;
         try {
             const options = (await searchStandardTargetSObjects({ term, operation: QUERY_TOOL_TYPE })) || [];
-            items = options.map((option) => ({ value: option.value, label: option.value, detail: (option.label || '').split(' • ')[0] }));
+            items = options.map((option) => ({ value: option.value, label: option.value, detail: (option.label || '').split(' • ')[0], objectOption: true }));
+            message = items.length ? (term ? '' : 'Type an object name to narrow the list.') : 'No matching objects you can query.';
         } catch (error) {
-            items = [];
+            message = 'Could not search objects. Choose Retry or press Ctrl+Space.';
+            retry = true;
         }
-        if (version === this._suggestVersion) {
-            this.showResult({ items }, context);
+        if (version === this._suggestVersion && this.matchesContext(context)) {
+            this.showResult({ items, message, retry }, context);
         }
     }
 
-    /** Loads an object's fields or child relationships once; an unknown object or a failed call caches an empty list. */
+    /** Shares pending requests and caches successful responses. A failed request can be retried. */
     async loadDescribe(cache, objectName, load) {
         const key = String(objectName).toLowerCase();
         if (cache.has(key)) {
             return;
         }
-        let options = [];
-        try {
-            options = (await load({ objectApiName: objectName })) || [];
-        } catch (error) {
-            options = [];
+        const requestKey = `${cache === this._fieldsByObject ? 'fields' : 'children'}:${key}`;
+        if (this._pendingDescribes.has(requestKey)) {
+            return this._pendingDescribes.get(requestKey);
         }
-        cache.set(key, options);
+        const pending = load({ objectApiName: objectName }).then((options) => {
+            cache.set(key, options || []);
+        });
+        this._pendingDescribes.set(requestKey, pending);
+        try {
+            await pending;
+        } finally {
+            this._pendingDescribes.delete(requestKey);
+        }
     }
 
     showResult(result, context) {
+        if (context && !this.matchesContext(context)) {
+            return;
+        }
         const items = result.items || [];
         const onlyTyped = items.length === 1 && context && items[0].value.toLowerCase() === context.term.toLowerCase();
         this.suggestions = onlyTyped ? [] : items;
-        this.suggestionMessage = this.suggestions.length ? '' : result.message || '';
-        this.activeIndex = 0;
+        this.suggestionMessage = onlyTyped ? '' : result.message || '';
+        // A sole match for a typed word is selected. With nothing typed, Enter stays a new line.
+        this.activeIndex = this.suggestions.length === 1 && context?.term ? 0 : -1;
+        this.canRetry = Boolean(result.retry);
         if (context) {
+            this._suggestionContext = context;
             this._replaceFrom = context.replaceFrom;
             this._replaceTo = context.replaceTo;
         }

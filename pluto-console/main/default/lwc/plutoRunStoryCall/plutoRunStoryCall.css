@@ -98,11 +98,6 @@
     color: var(--slds-g-color-warning-base-40, #8c4b02);
 }
 
-.flag_data {
-    background: var(--slds-g-color-neutral-base-95, #f3f3f3);
-    color: var(--muted);
-}
-
 /* Collapsible blocks */
 
 .block {

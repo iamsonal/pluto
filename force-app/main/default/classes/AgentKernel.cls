@@ -729,18 +729,21 @@ public without sharing class AgentKernel {
             Boolean rearmableQueuedCommand = new Set<String>{ AgentKernelModels.COMMAND_STATUS_PENDING, AgentKernelModels.COMMAND_STATUS_RETRY_WAITING }
                 .contains(command.Status__c);
             Boolean failedCommand = command.Status__c == AgentKernelModels.COMMAND_STATUS_FAILED;
+            // An expired approval never started the tool, whatever its effects, so the call
+            // waits for a new approval: nobody approved it, and the approval check runs first.
+            Boolean expiredApproval = failedCommand && command.ErrorCode__c == AgentKernelModels.ERROR_TOOL_APPROVAL_EXPIRED;
             // A binding fix cannot reach the re-armed command, whose admitted binding is frozen,
             // so the model re-plans and its next call is admitted with the corrected binding.
             Boolean rearmableFailedCommand =
                 failedCommand &&
-                AgentKernelRecovery.isRecoverySafe(command) &&
+                (expiredApproval || AgentKernelRecovery.isRecoverySafe(command)) &&
                 !BINDING_PAUSE_CODES.contains(rescuePausedErrorCode);
             if (!rearmableQueuedCommand && !failedCommand) {
                 throw new AgentKernelException.InvalidTransitionException('The paused current command cannot be re-armed.');
             }
             rescuePriorAttemptNumber = command.AttemptNumber__c;
             if (rearmableQueuedCommand || rearmableFailedCommand) {
-                rescueMode = rearmableFailedCommand ? 'rearm_failed' : 'rearm_queued';
+                rescueMode = expiredApproval ? 'reapprove' : rearmableFailedCommand ? 'rearm_failed' : 'rearm_queued';
                 assertCommandAdmission(run, command.CommandType__c);
                 command.Status__c = AgentKernelModels.COMMAND_STATUS_PENDING;
                 command.ExpectedRunRevision__c = rescueNextRevision;
@@ -2009,6 +2012,7 @@ public without sharing class AgentKernel {
                 ProviderToolCallId__c,
                 PolicyApproved__c,
                 ApprovalFingerprint__c,
+                ErrorCode__c,
                 BatchKey__c,
                 BatchOrdinal__c,
                 BatchSize__c,

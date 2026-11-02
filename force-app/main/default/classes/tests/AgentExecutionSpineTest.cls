@@ -57,7 +57,7 @@ private class AgentExecutionSpineTest {
         KernelTestModelProvider.mode = 'toolThenFinal';
         KernelTestModelProvider.toolInput = '{"_rationale":"The customer reports a team-wide outage.","value":"test"}';
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
-        // A tool with external effects may need reconciling, so the model explains each call.
+        // The call runs in its own job, so the test can read the stored input and rationale before the tool runs.
         AgentTool__c external = AgentKernelTestFactory.createTool(
             definition.Id,
             'test_tool',
@@ -92,21 +92,23 @@ private class AgentExecutionSpineTest {
     }
 
     @IsTest
-    static void onlyReviewableCallsAreAskedWhyAndTheReasonIsReplayed() {
-        AgentTool__c readOnly = new AgentTool__c(ToolType__c = AgentToolTypeTestFixtures.IN_ORG);
-        AgentTool__c approved = new AgentTool__c(ToolType__c = AgentToolTypeTestFixtures.IN_ORG, ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED);
-        AgentTool__c external = new AgentTool__c(ToolType__c = AgentToolTypeTestFixtures.EXTERNAL);
+    static void everyCallIsAskedWhyAndTheReasonIsReplayed() {
         String approver = ModelRequestAssembler.APPROVER_RATIONALE;
-        String reviewer = ModelRequestAssembler.REVIEWER_RATIONALE;
-        System.assertEquals(null, ModelRequestAssembler.rationalePrompt(readOnly), 'A read-only call is not asked why.');
-        System.assertEquals(approver, ModelRequestAssembler.rationalePrompt(approved));
-        System.assertEquals(reviewer, ModelRequestAssembler.rationalePrompt(external), 'An operator may reconcile an external effect.');
-        external.ApprovalMode__c = AgentKernelModels.APPROVAL_DECIDED_BY_POLICY;
-        System.assertEquals(approver, ModelRequestAssembler.rationalePrompt(external), 'An approver may read a call the policy holds.');
-        AgentTool__c readOnlyExternal = new AgentTool__c(ToolType__c = AgentToolTypeTestFixtures.READ_ONLY_EXTERNAL);
-        System.assertEquals(null, ModelRequestAssembler.rationalePrompt(readOnlyExternal), 'A read-only outside lookup is not asked why.');
-        readOnlyExternal.ApprovalMode__c = AgentKernelModels.APPROVAL_DECIDED_BY_POLICY;
-        System.assertEquals(approver, ModelRequestAssembler.rationalePrompt(readOnlyExternal), 'A policy may still ask for approval.');
+        String run = ModelRequestAssembler.RUN_RATIONALE;
+        for (String toolType : new List<String>{
+            AgentToolTypeTestFixtures.IN_ORG,
+            AgentToolTypeTestFixtures.READ_ONLY_EXTERNAL,
+            AgentToolTypeTestFixtures.EXTERNAL
+        }) {
+            AgentTool__c tool = new AgentTool__c(ToolType__c = toolType);
+            System.assertEquals(run, ModelRequestAssembler.rationalePrompt(tool), 'A call that runs at once is asked one sentence: ' + toolType);
+            tool.ApprovalMode__c = AgentKernelModels.APPROVAL_NOT_REQUIRED;
+            System.assertEquals(run, ModelRequestAssembler.rationalePrompt(tool), 'Not Required is asked one sentence: ' + toolType);
+            tool.ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
+            System.assertEquals(approver, ModelRequestAssembler.rationalePrompt(tool), 'An approver reads the call: ' + toolType);
+            tool.ApprovalMode__c = AgentKernelModels.APPROVAL_DECIDED_BY_POLICY;
+            System.assertEquals(approver, ModelRequestAssembler.rationalePrompt(tool), 'An approver may read a call the policy holds: ' + toolType);
+        }
         String schema = '{"type":"object","properties":{"value":{"type":"string"}},"additionalProperties":false}';
         System.assert(
             ModelRequestAssembler.withRationale(schema, approver).contains(approver),
@@ -114,7 +116,7 @@ private class AgentExecutionSpineTest {
         );
         System.assert(
             approver.contains('If this call only reads'),
-            'A policy agent asks reads for the approver text too, so the text keeps a read to one sentence.'
+            'A Decided by Policy read is asked the approver text too, so the text keeps a read to one sentence.'
         );
 
         resetDoubles();

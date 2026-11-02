@@ -10,7 +10,7 @@ const site = join(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = join(site, '..');
 const sources = ['force-app', 'pluto-console', 'pluto-model-adapters'].map((p) => join(repo, p, 'main/default'));
 const out = join(site, 'src/content/docs/reference/generated');
-const github = 'https://github.com/iamsonal/aiAgentStudio/blob/main';
+const github = 'https://github.com/iamsonal/pluto/blob/main';
 
 const decode = (s) =>
   s
@@ -238,7 +238,7 @@ writeFileSync(
     'Extension contract',
     'The rules every tool, model provider, context provider, and policy class must follow.',
     `This page is copied from [force-app/contracts/EXTENSIONS.md](${github}/force-app/contracts/EXTENSIONS.md) on every build. Edit that file, not this page.\n\n${contract}`
-  ).replace('editUrl: false', `editUrl: ${JSON.stringify(`https://github.com/iamsonal/aiAgentStudio/edit/main/force-app/contracts/EXTENSIONS.md`)}`)
+  )
 );
 
 // Hand-written pages: every object, field, permission set, and AgentKernel class they name must still exist.

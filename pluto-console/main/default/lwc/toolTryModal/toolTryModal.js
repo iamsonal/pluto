@@ -127,6 +127,12 @@ export default class ToolTryModal extends LightningModal {
         return this.screen === 'result';
     }
 
+    /** What the agent's execution user lacks for this tool. The dry run runs as the admin, so it can succeed anyway. */
+    get executionAccessNote() {
+        const problem = this.canTry ? this.state.executionUserAccess : null;
+        return problem ? `${problem} This dry run runs as you, so it can succeed where the agent would be refused.` : '';
+    }
+
     get showApprovalNote() {
         return this.canTry && this.state.requiresApproval === true;
     }

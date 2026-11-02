@@ -3,7 +3,7 @@ title: License
 description: What the AGPL-3.0-only license lets you do with Pluto, and what it asks of you.
 ---
 
-Pluto is licensed under the [GNU Affero General Public License, version 3 only](https://github.com/iamsonal/aiAgentStudio/blob/main/LICENSE) (AGPL-3.0-only), with the [Pluto Extension Exception](https://github.com/iamsonal/aiAgentStudio/blob/main/LICENSE-EXCEPTION). Copyright (c) 2026 Sonal.
+Pluto is licensed under the [GNU Affero General Public License, version 3 only](https://github.com/iamsonal/pluto/blob/main/LICENSE) (AGPL-3.0-only), with the [Pluto Extension Exception](https://github.com/iamsonal/pluto/blob/main/LICENSE-EXCEPTION). Copyright (c) 2026 Sonal.
 
 The license covers Pluto Core, Pluto Model Adapters, and Pluto Console. The full text in the LICENSE and LICENSE-EXCEPTION files is what counts. This page explains it in plain words and is not legal advice.
 
@@ -40,11 +40,11 @@ The exception does not cover changes to Pluto's own files, or a copy of Pluto co
 
 ## Name and logo
 
-The license covers the code only. It does not let you use the Pluto name or logo for a fork or a product. See [Trademarks](https://github.com/iamsonal/aiAgentStudio/blob/main/TRADEMARKS.md).
+The license covers the code only. It does not let you use the Pluto name or logo for a fork or a product. See [Trademarks](https://github.com/iamsonal/pluto/blob/main/TRADEMARKS.md).
 
 ## Contributions
 
-Each author signs the [Pluto Contributor License Agreement](https://github.com/iamsonal/aiAgentStudio/blob/main/CLA.md) once, before their first pull request is merged. Authors keep the copyright to their work. The agreement lets the maintainer release it under other licenses as well as the AGPL.
+Each author signs the [Pluto Contributor License Agreement](https://github.com/iamsonal/pluto/blob/main/CLA.md) once, before their first pull request is merged. Authors keep the copyright to their work. The agreement lets the maintainer release it under other licenses as well as the AGPL.
 
 ## Earlier versions
 

@@ -514,6 +514,14 @@ describe('plutoRunStoryModel', () => {
     it('pulls the headline out of a JSON answer', () => {
         const story = buildStory(smokeRun(), T0);
         expect(story.outcome.headline).toBe('Case 00001028 was escalated to High.');
+        expect(story.outcome.headlineMarkdown).toBe(false);
+    });
+
+    it('keeps an answer with no output format as Markdown for the headline', () => {
+        const markdown = '## Done\n\n- Closed the case.';
+        const story = buildStory(smokeRun({ run: { Output__c: markdown } }), T0);
+        expect(story.outcome.headline).toBe(markdown);
+        expect(story.outcome.headlineMarkdown).toBe(true);
     });
 
     it('explains an empty input instead of showing {}', () => {

@@ -171,6 +171,26 @@ public class AgentKernelTestFactory {
         return userWith(new List<String>{ HUMAN_DECISION }).Id;
     }
 
+    /** An active user who holds Approval Relay, as an approval process integration needs. */
+    public static User relayUser() {
+        return userWith(new List<String>{ APPROVAL_RELAY });
+    }
+
+    /** Removes every direct grant of Approval Relay in the org, so a test sees an org with no relay user. */
+    public static void removeRelayUsers() {
+        Set<Id> grantingSetIds = new Set<Id>();
+        for (SetupEntityAccess access : [
+            SELECT ParentId
+            FROM SetupEntityAccess
+            WHERE SetupEntityId IN (SELECT Id FROM CustomPermission WHERE DeveloperName = :APPROVAL_RELAY AND NamespacePrefix = NULL)
+        ]) {
+            grantingSetIds.add(access.ParentId);
+        }
+        System.runAs(self()) {
+            delete [SELECT Id FROM PermissionSetAssignment WHERE PermissionSetId IN :grantingSetIds AND PermissionSetGroupId = NULL];
+        }
+    }
+
     /** A retry request for the leased command, as the worker builds it. */
     public static AgentKernelModels.RetryRequest retryRequest(AgentRun__c run, AgentCommand__c command, String errorCode, Integer delaySeconds) {
         AgentKernelModels.RetryRequest request = new AgentKernelModels.RetryRequest();

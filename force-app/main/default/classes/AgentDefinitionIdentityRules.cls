@@ -21,7 +21,7 @@
  * no one else can approve it and scheduled recovery cannot continue it.
  */
 public inherited sharing class AgentDefinitionIdentityRules {
-    public static final String APPROVAL_UNSUPPORTED_MESSAGE = 'This agent has no Agent Execution Identity, so it runs as whoever starts it and cannot have tools that need approval: an approved call could not continue in that user\'s job chain. Set an Agent Execution Identity on the agent, or change the tool\'s Approval from Always Required.';
+    public static final String APPROVAL_UNSUPPORTED_MESSAGE = 'This agent has no Agent Execution Identity, so it runs as whoever starts it and cannot have tools that need approval: an approved call could not continue in that user\'s job chain. Set an Agent Execution Identity on the agent, or change the tool\'s Approval Mode from Always Required.';
     public static final String CLEAR_IDENTITY_REFUSED_MESSAGE = 'This agent has tools that need approval, so it needs an Agent Execution Identity. Keep the identity, or change the Approval of those tools from Always Required first.';
 
     public static String error(AgentDefinition__c definition) {

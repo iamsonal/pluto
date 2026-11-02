@@ -148,7 +148,7 @@ private class AgentConfigurationValidationServiceTest {
 
         assertRefused(
             new AgentTool__c(Id = tool.Id, ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY),
-            'Approval is Not Required, so clear the approver, Approval Timeout, and When Approval Expires.'
+            'Approval Mode is Not Required, so clear the approver, Approval Timeout, and When Approval Expires.'
         );
         assertRefused(
             new AgentTool__c(
@@ -165,7 +165,7 @@ private class AgentConfigurationValidationServiceTest {
                 ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED,
                 ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY
             ),
-            'Choose an Approver Type for a tool whose Approval is Always Required.'
+            'Choose an Approver Type for a tool whose Approval Mode is Always Required.'
         );
         assertRefused(
             new AgentTool__c(
@@ -175,7 +175,7 @@ private class AgentConfigurationValidationServiceTest {
                 ApproverType__c = AgentKernelModels.APPROVER_USER,
                 ApproverUser__c = approverId
             ),
-            'Approval is Decided by Policy, so the policy names the approver. Clear Approver Type, Approver User, and Approver Queue.'
+            'Approval Mode is Decided by Policy, so the policy names the approver. Clear Approver Type, Approver User, and Approver Queue.'
         );
         AgentKernelTestFactory.updateRecord(
             new AgentTool__c(
@@ -212,7 +212,7 @@ private class AgentConfigurationValidationServiceTest {
             new AgentTool__c(
                 Id = tool.Id,
                 ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED,
-                ApproverType__c = AgentKernelModels.APPROVER_DELIVERY_CHANNEL,
+                ApproverType__c = AgentKernelModels.APPROVER_APPROVAL_PROCESS,
                 ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY
             ),
             false
@@ -226,9 +226,10 @@ private class AgentConfigurationValidationServiceTest {
     static void clearingTheIdentityOfAnApprovalAgentFailsWhenSaved() {
         AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
         AgentKernelTestFactory.useDelegatedPrincipal(definition);
+        AgentKernelTestFactory.relayUser();
         AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'write_case', '{"type":"object"}');
         tool.ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
-        tool.ApproverType__c = AgentKernelModels.APPROVER_DELIVERY_CHANNEL;
+        tool.ApproverType__c = AgentKernelModels.APPROVER_APPROVAL_PROCESS;
         tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY;
         AgentKernelTestFactory.updateRecord(tool);
         definition.ExecutionIdentity__c = null;

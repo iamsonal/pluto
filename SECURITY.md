@@ -20,31 +20,31 @@ from before a release are not maintained.
 
 ## Run Pluto safely
 
-The [Pluto docs](https://iamsonal.github.io/aiAgentStudio/) explain each of these:
+The [Pluto docs](https://iamsonal.github.io/pluto/) explain each of these:
 
 1. Keep model API keys and other secrets in Named Credentials and External
    Credentials. Never put them in instructions, records, or code. See
-   [Connect a model](https://iamsonal.github.io/aiAgentStudio/setup/model/).
+   [Connect a model](https://iamsonal.github.io/pluto/setup/model/).
 2. Give the operator, approver, execution user, and sensitive-data permission
    sets only to the users who need them. See
-   [Give people access](https://iamsonal.github.io/aiAgentStudio/setup/permissions/).
+   [Give people access](https://iamsonal.github.io/pluto/setup/permissions/).
 3. Require approval for tools that change records or call outside systems,
    unless an authorization policy you reviewed allows the call. See
-   [Require approval](https://iamsonal.github.io/aiAgentStudio/approvals/require/).
+   [Require approval](https://iamsonal.github.io/pluto/approvals/require/).
 4. Check the retention settings before you send customer data to a model
-   provider. See [Retention and erasure](https://iamsonal.github.io/aiAgentStudio/data/retention/).
+   provider. See [Retention and erasure](https://iamsonal.github.io/pluto/data/retention/).
 5. Turn on Core's recovery and retention schedules, and check Agent Core
-   Health. See [Check health](https://iamsonal.github.io/aiAgentStudio/operate/health/).
+   Health. See [Check health](https://iamsonal.github.io/pluto/operate/health/).
 6. Limit who holds Modify All Data. The trust vault keeps real values as plain
    text until retention removes them. Use Salesforce Shield Platform
    Encryption if you need encryption at rest. See
-   [Sensitive data](https://iamsonal.github.io/aiAgentStudio/data/sensitive/).
+   [Sensitive data](https://iamsonal.github.io/pluto/data/sensitive/).
 7. Do not rely on tokens alone. Core turns emails, phone numbers, card
    numbers, and classified fields into tokens, but other personal data in free
    text reaches the model as written. Classify sensitive fields, return
    records as record sets, and keep each tool's Input Schema closed with
-   `"additionalProperties": false`. See [Sensitive data](https://iamsonal.github.io/aiAgentStudio/data/sensitive/).
+   `"additionalProperties": false`. See [Sensitive data](https://iamsonal.github.io/pluto/data/sensitive/).
 8. Never change run, command, or event records by hand. Use the supported
-   actions in [Fix a stuck run](https://iamsonal.github.io/aiAgentStudio/operate/stuck-run/). In Apex, use
+   actions in [Fix a stuck run](https://iamsonal.github.io/pluto/operate/stuck-run/). In Apex, use
    `AgentRunService` to change a run and the paged `AgentTraceService` methods
    to read its history.

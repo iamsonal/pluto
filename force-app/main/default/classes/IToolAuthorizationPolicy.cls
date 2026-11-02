@@ -13,7 +13,7 @@
 
 /**
  * Administrator-selected, query-only decision for each call of a tool whose
- * Approval is Decided by Policy. Core never asks it about other tools. It may
+ * Approval Mode is Decided by Policy. Core never asks it about other tools. It may
  * allow the call, deny it, or require approval from a queue or user it names.
  */
 global interface IToolAuthorizationPolicy {

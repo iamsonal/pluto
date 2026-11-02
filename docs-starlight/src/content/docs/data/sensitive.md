@@ -14,7 +14,7 @@ Before anything reaches the model or is stored on a run, Core replaces sensitive
 | Payment Card | Anywhere |
 | US SSN | Anywhere |
 | IBAN | Anywhere |
-| Salesforce Classified | Fields with a data classification, in records a tool or context provider returns as records |
+| Salesforce Classified | Fields with a Data Sensitivity Level other than Public or Internal, in records a tool or context provider returns as records |
 
 ## What is not covered
 
@@ -24,10 +24,14 @@ Other personal data in free text reaches the model as written: names, street add
 
 To protect a field:
 
-1. Set its **Data Sensitivity Level** or **Compliance Categorization** in Object Manager.
+1. In Object Manager, set its **Data Sensitivity Level** to Confidential, Restricted, Mission Critical, or a level you added. Public and Internal fields reach the model as written.
 2. Read it with a tool that returns records, such as Query Records, or a Field Set context provider.
 
-A classified field that a tool pastes into plain text is not protected.
+The field's value reaches the model as a token such as `{{CLASSIFIED_1_9f2c61ab}}`. It keeps the same token for the whole run.
+
+Core does not read **Compliance Categorization**. You can tag fields for compliance reports without hiding them from the model.
+
+A classified field that a tool or an Apex context provider pastes into plain text is not protected. Ask your developer to return records instead.
 
 ## Give a tool real values
 

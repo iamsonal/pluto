@@ -607,15 +607,19 @@ public without sharing class AgentKernelRecovery {
             }
             String errorCode = 'WAIT_EXPIRED';
             String errorMessage = 'The intentional wait expired before it was resumed.';
+            Id expiredApprovalCommandId = null;
             if (command != null && command.Status__c == AgentKernelModels.COMMAND_STATUS_WAITING) {
                 command.Status__c = AgentKernelModels.COMMAND_STATUS_FAILED;
-                command.ErrorCode__c = errorCode;
-                command.ErrorMessage__c = errorMessage;
+                // An expired approval is not a lost call: the tool never started, so rescue asks again.
+                command.ErrorCode__c = approval == null ? errorCode : AgentKernelModels.ERROR_TOOL_APPROVAL_EXPIRED;
+                command.ErrorMessage__c = approval == null ? errorMessage : 'Nobody approved the tool call before its approval deadline, so it did not run.';
+                // The run keeps the call as current, so Rescue can ask for approval again.
+                expiredApprovalCommandId = approval == null ? null : command.Id;
                 // A failed tool call stays a replayable transcript turn until the run ends.
                 commandsToUpdate.add(command);
             }
             AgentLifecycleRecords.clearWaitingMetadata(run);
-            AgentKernel.pauseAfterFault(run, nowValue, errorCode, errorMessage, null);
+            AgentKernel.pauseAfterFault(run, nowValue, errorCode, errorMessage, expiredApprovalCommandId);
             Decimal sequence = AgentLifecycleRecords.nextEventSequence(run);
             String operationKey = command == null ? null : command.OperationKey__c;
             eventsToInsert.add(

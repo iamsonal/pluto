@@ -32,7 +32,7 @@
                 <label>Requester&apos;s Manager</label>
             </value>
             <value>
-                <fullName>Delivery Channel</fullName>
+                <fullName>Approval Process</fullName>
                 <default>false</default>
                 <label>Approval Process</label>
             </value>

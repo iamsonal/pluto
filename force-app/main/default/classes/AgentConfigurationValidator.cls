@@ -251,24 +251,6 @@ public inherited sharing class AgentConfigurationValidator {
         } finally {
             ExtensionExecutionGuard.close(batch);
         }
-        assertExecutionUserAccess(active);
-    }
-
-    /** Fails the save of a standard record tool its agent's execution user could not use. */
-    private static void assertExecutionUserAccess(List<AgentTool__c> tools) {
-        Set<Id> definitionIds = new Set<Id>();
-        for (AgentTool__c tool : tools) {
-            if (tool.AgentDefinition__c != null && !tool.hasErrors()) {
-                definitionIds.add(tool.AgentDefinition__c);
-            }
-        }
-        Map<Id, User> executionUsers = ToolExecutionUserAccess.executionUsers(definitionIds);
-        for (AgentTool__c tool : tools) {
-            String problem = tool.hasErrors() ? null : ToolExecutionUserAccess.problem(tool, executionUsers.get(tool.AgentDefinition__c));
-            if (problem != null) {
-                tool.addError(problem);
-            }
-        }
     }
 
     /**
@@ -472,7 +454,7 @@ public inherited sharing class AgentConfigurationValidator {
         Object properties = schema instanceof Map<String, Object> ? ((Map<String, Object>) schema).get('properties') : null;
         if (properties instanceof Map<String, Object> && ((Map<String, Object>) properties).containsKey(AgentKernelModels.TOOL_RATIONALE_PROPERTY)) {
             throw new AgentKernelException.ConfigurationException(
-                'Rename the ' + AgentKernelModels.TOOL_RATIONALE_PROPERTY + ' input. Agent Core adds it to every tool to ask the model why it made the call.'
+                'Rename the ' + AgentKernelModels.TOOL_RATIONALE_PROPERTY + ' input. Pluto Core adds it to every tool to ask the model why it made the call.'
             );
         }
     }

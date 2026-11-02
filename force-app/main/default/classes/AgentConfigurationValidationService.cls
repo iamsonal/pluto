@@ -105,7 +105,7 @@ global inherited sharing class AgentConfigurationValidationService {
                         'UNSCOPED_RECORD_UPDATE',
                         'AgentTool[' + tool.DeveloperName__c + '].ImplementationConfiguration',
                         'This Update Record tool may change any record the execution user can edit, chosen by the model. Text in records or emails can steer ' +
-                        'that choice. Check Anchor Record Only, or set Approval to Always Required.'
+                        'that choice. Check Anchor Record Only, or set Approval Mode to Always Required.'
                     );
                 }
             }
@@ -115,8 +115,8 @@ global inherited sharing class AgentConfigurationValidationService {
                 report,
                 'POLICY_NEVER_RUNS',
                 'AgentDefinition.ToolAuthorizationPolicyClass',
-                'The Tool Authorization Policy Class runs only for tools whose Approval is Decided by Policy, and this agent has none. ' +
-                'Set Approval to Decided by Policy on the tools the policy should decide, or clear the policy.'
+                'The Tool Authorization Policy Class runs only for tools whose Approval Mode is Decided by Policy, and this agent has none. ' +
+                'Set Approval Mode to Decided by Policy on the tools the policy should decide, or clear the policy.'
             );
         }
         warning(

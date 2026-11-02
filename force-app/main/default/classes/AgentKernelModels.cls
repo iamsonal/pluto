@@ -101,7 +101,7 @@ global inherited sharing class AgentKernelModels {
     public static final String APPROVER_QUEUE = 'Queue';
     public static final String APPROVER_ANCHOR_OWNER = 'Anchor Record Owner';
     public static final String APPROVER_REQUESTER_MANAGER = 'Requester\'s Manager';
-    public static final String APPROVER_DELIVERY_CHANNEL = 'Delivery Channel';
+    public static final String APPROVER_APPROVAL_PROCESS = 'Approval Process';
 
     /** AgentTool__c.ApprovalMode__c. Blank means Not Required. */
     public static final String APPROVAL_NOT_REQUIRED = 'Not Required';
@@ -839,7 +839,7 @@ global inherited sharing class AgentKernelModels {
         global String developerName { get; set; }
         global String description { get; set; }
         global String inputSchema { get; set; }
-        /** True when every call waits for approval: the tool's Approval is Always Required. */
+        /** True when every call waits for approval: the tool's Approval Mode is Always Required. */
         global Boolean requiresApproval { get; set; }
 
         global ToolDefinition() {
@@ -905,11 +905,9 @@ global inherited sharing class AgentKernelModels {
 
     global class ContextResponse {
         global String sourceName { get; set; }
+        /** Text with no field behind it, such as file text. Classified fields are never protected here. */
         global String content { get; set; }
-        /**
-         * Named Salesforce record sets. Use this instead of content when Core
-         * must enforce FLS and native field-classification protection.
-         */
+        /** Named Salesforce record sets. Core enforces FLS on them and tokenizes classified fields. */
         global Map<String, List<SObject>> recordSets { get; set; }
 
         global ContextResponse() {

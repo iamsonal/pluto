@@ -619,6 +619,10 @@
     overflow-wrap: anywhere;
 }
 
+.headline c-markdown-viewer {
+    display: block;
+}
+
 .outcome-grid,
 .panel-grid {
     display: grid;

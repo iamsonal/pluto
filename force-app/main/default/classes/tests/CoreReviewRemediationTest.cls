@@ -485,7 +485,7 @@ private class CoreReviewRemediationTest {
         AgentKernelModels.StartResult started = AgentKernelTestFactory.startRunWithoutDispatch(definition);
         AgentCommand__c command = leasedToolCommand(tool, started, '{}');
         AgentApprovalService.Request request = AgentKernelTestFactory.approvalRequest(null);
-        request.approverType = AgentKernelModels.APPROVER_DELIVERY_CHANNEL;
+        request.approverType = AgentKernelModels.APPROVER_APPROVAL_PROCESS;
         AgentKernel.waitForApproval(started.runId, command.Id, command.ExpectedRunRevision__c, command.OperationKey__c, command.LeaseToken__c, request);
         Id approvalId = AgentKernelTestFactory.pendingApproval(started.runId).Id;
         User reviewer = new User(

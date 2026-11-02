@@ -311,6 +311,54 @@ private class ApprovalDecisionScenarioTest {
         }
     }
 
+    @IsTest
+    static void anApprovalProcessToolNeedsARelayUserWhenSaved() {
+        AgentKernelTestFactory.removeRelayUsers();
+        AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
+        AgentKernelTestFactory.useDelegatedPrincipal(definition);
+        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'refund_tool', '{"type":"object"}');
+        tool.ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
+        tool.ApproverType__c = AgentKernelModels.APPROVER_APPROVAL_PROCESS;
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY;
+
+        Database.SaveResult refused = Database.update(tool, false);
+
+        System.assertEquals(false, refused.isSuccess(), 'No decision could reach Core without a relay user.');
+        System.assert(String.valueOf(refused.getErrors()).contains(AgentApprovalService.APPROVAL_PROCESS_RELAY_MESSAGE), String.valueOf(refused.getErrors()));
+
+        AgentKernelTestFactory.relayUser();
+        Database.SaveResult accepted = Database.update(tool, false);
+
+        System.assert(accepted.isSuccess(), String.valueOf(accepted.getErrors()));
+    }
+
+    @IsTest
+    static void anApprovalProcessCallPausesWhenOnlyTheExecutionUserCouldRelay() {
+        AgentKernelTestFactory.removeRelayUsers();
+        AgentRun__c run = attendedRun();
+        AgentTool__c tool = new AgentTool__c(
+            DeveloperName__c = 'refund_tool',
+            ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED,
+            ApproverType__c = AgentKernelModels.APPROVER_APPROVAL_PROCESS,
+            ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_DENY
+        );
+        // The execution user may never relay its own runs' decisions, so its grant does not count.
+        AgentKernelTestFactory.grant(run.ExpectedPrincipalUser__c, new List<String>{ AgentKernelTestFactory.APPROVAL_RELAY });
+
+        try {
+            AgentApprovalService.request(run, tool, null);
+            System.assert(false, 'An approval must not wait when no relay user can pass the decision back.');
+        } catch (AgentApprovalService.AssignmentException expected) {
+            System.assert(expected.getMessage().contains('Agent Kernel Approval Relay'), expected.getMessage());
+        }
+
+        AgentKernelTestFactory.relayUser();
+        AgentApprovalService.Request request = AgentApprovalService.request(run, tool, null);
+
+        System.assertEquals(AgentKernelModels.APPROVER_APPROVAL_PROCESS, request.approverType);
+        System.assertEquals(null, request.ownerId, 'The approval process picks the reviewers.');
+    }
+
     private static AgentTool__c policyDecidedTool() {
         return new AgentTool__c(
             DeveloperName__c = 'refund_tool',

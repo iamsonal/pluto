@@ -12,14 +12,14 @@ A policy is an Apex class that a developer writes. It implements `IToolAuthoriza
 1. Ask your developer for the policy class, which tools it covers, and which queues or users it names.
 2. Check that each queue the policy names exists and lists Agent Approval under **Supported Objects**.
 3. On the agent, pick the class in **Tool Authorization Policy Class**.
-4. On each tool the policy covers, set **Approval** to **Decided by Policy**. Leave Approver Type, Approver User, and Approver Queue blank. The policy names the approver.
+4. On each tool the policy covers, set **Approval Mode** to **Decided by Policy**. Leave Approver Type, Approver User, and Approver Queue blank. The policy names the approver.
 5. On each of those tools, choose **When Approval Expires**. Optionally set **Approval Timeout (Minutes)** for calls where the policy gives no deadline.
 
 The tool page saves without an error when the setup is valid. It refuses a Decided by Policy tool on an agent with no policy class. It also refuses clearing the policy class while the agent has an active Decided by Policy tool, and names those tools.
 
 ## Who decides
 
-Core asks the policy only about tools whose Approval is Decided by Policy. Tools set to Not Required or Always Required never reach it.
+Core asks the policy only about tools whose Approval Mode is Decided by Policy. Tools set to Not Required or Always Required never reach it.
 
 | Policy answer | What happens |
 | --- | --- |
@@ -33,7 +33,7 @@ Core runs the policy again before an approved call runs. A deny still stops the 
 
 A policy can only narrow what the agent may do. It cannot skip a permission check or approve a call.
 
-Core's configuration check, `AgentConfigurationValidationService.validate`, returns the warning `POLICY_NEVER_RUNS` when the agent has a policy class but no active tool whose Approval is Decided by Policy.
+Core's configuration check, `AgentConfigurationValidationService.validate`, returns the warning `POLICY_NEVER_RUNS` when the agent has a policy class but no active tool whose Approval Mode is Decided by Policy.
 
 ## See why a call waited
 

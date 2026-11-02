@@ -493,8 +493,7 @@ public without sharing class ModelRequestAssembler {
                     'Tool ' + record.DeveloperName__c + ' cannot build its inputs: ' + schema.problem + ' Fix the tool, then retry the run.'
                 );
             }
-            String rationale = rationalePrompt(record);
-            item.inputSchema = rationale == null ? schema.schema : withRationale(schema.schema, rationale);
+            item.inputSchema = withRationale(schema.schema, rationalePrompt(record));
             item.requiresApproval = AgentApprovalService.mode(record) == AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
             result.add(item);
         }
@@ -502,11 +501,11 @@ public without sharing class ModelRequestAssembler {
     }
 
     /**
-     * The model explains the calls a person may review: tools whose calls can
-     * wait for approval (Always Required or Decided by Policy) and tools whose
-     * effects leave this org (an operator may reconcile them). Read-only calls
-     * are not asked. A policy decides per call after the schema is sent, so a
-     * Decided by Policy tool is asked as if it will wait.
+     * The model explains every call, so a person reading the run can see why
+     * each one happened. A call that can wait for approval (Always Required or
+     * Decided by Policy) gets the approver's text. A policy decides per call
+     * after the schema is sent, so a Decided by Policy tool is asked as if it
+     * will wait. Every other call gets one short sentence.
      */
     @TestVisible
     private static final String APPROVER_RATIONALE =
@@ -515,17 +514,14 @@ public without sharing class ModelRequestAssembler {
         'depends on that you did not confirm with a tool. If you confirmed every condition, say so. ' +
         'If this call only reads, write one sentence on what you need to learn and why, and nothing else. Do not mention approval.';
     @TestVisible
-    private static final String REVIEWER_RATIONALE =
-        'Shown to a person who may review this action. In one or two short sentences: the facts from records or the request that make it needed now. ' +
+    private static final String RUN_RATIONALE =
+        'Shown to a person reviewing this run. In one short sentence: what this call does and the facts from records or the request that make it needed now. ' +
         'Do not repeat the inputs or mention approval.';
 
-    /** The rationale description this tool is asked for, or null when the call is not asked why. */
+    /** The rationale description this tool is asked for. */
     @TestVisible
     private static String rationalePrompt(AgentTool__c tool) {
-        if (AgentApprovalService.mode(tool) != AgentKernelModels.APPROVAL_NOT_REQUIRED) {
-            return APPROVER_RATIONALE;
-        }
-        return AgentToolTypeService.mayChangeOutside(tool) ? REVIEWER_RATIONALE : null;
+        return AgentApprovalService.mode(tool) == AgentKernelModels.APPROVAL_NOT_REQUIRED ? RUN_RATIONALE : APPROVER_RATIONALE;
     }
 
     /**

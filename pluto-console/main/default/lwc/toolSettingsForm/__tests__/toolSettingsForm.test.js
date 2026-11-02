@@ -275,4 +275,18 @@ describe('c-tool-settings-form', () => {
         expect(changed.mock.calls[0][0].detail.value).toBe('SELECT Id FROM Case WHERE AccountId ');
         expect(changed.mock.calls[1][0].detail.value).toBeUndefined();
     });
+
+    it('passes query focus changes to the parent with the setting name', async () => {
+        const element = create({ toolType: 'QueryRecords', settings: [{ name: 'query', label: 'Query', type: 'query', required: true }] });
+        const editing = jest.fn();
+        element.addEventListener('queryeditingchange', editing);
+        await flush();
+        const editor = control(element, 'query').querySelector('c-tool-query-editor');
+        editor.dispatchEvent(new CustomEvent('queryeditingchange', { detail: { editing: true } }));
+        editor.dispatchEvent(new CustomEvent('queryeditingchange', { detail: { editing: false } }));
+        expect(editing.mock.calls.map(([event]) => event.detail)).toEqual([
+            { name: 'query', editing: true },
+            { name: 'query', editing: false }
+        ]);
+    });
 });

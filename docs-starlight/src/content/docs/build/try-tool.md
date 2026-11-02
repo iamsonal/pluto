@@ -21,7 +21,11 @@ If the tool refuses the input, for example a text value where it needs a number,
 
 ## Who it runs as
 
-Try Tool always runs as you, even when the agent has an Agent Execution Identity. It reads and changes only what you can. To see what the execution user can reach, start a real agent run.
+Try Tool always runs as you, even when the agent has an Agent Execution Identity. It reads and changes only what you can, so it can succeed where the agent would be refused.
+
+For a Query Records, Create Record, or Update Record tool on an agent with an Agent Execution Identity, Try Tool also checks the execution user. If that user cannot read, create, or edit something the tool names, a warning above the input and the result names each object or field, for example `cannot read Account.AccountNumber`. The dry run still runs. To fix it, give the execution user that access in a permission set, or remove those fields from the tool.
+
+Saving a tool does not check the execution user's access. Custom Apex and Flow tools are not checked, because Pluto cannot see what they read.
 
 ## What it cannot do
 

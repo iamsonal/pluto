@@ -245,6 +245,140 @@ private class KernelV11LifecycleTest {
     }
 
     /** Runs one call of a Decided by Policy tool on a new policy agent, and returns the run. */
+    @IsTest
+    static void rescueAfterAnExpiredApprovalAsksAgainForAnInOrgTool() {
+        assertRescueAsksAgain(AgentToolTypeTestFixtures.IN_ORG);
+    }
+
+    @IsTest
+    static void rescueAfterAnExpiredApprovalAsksAgainForAnOutsideEffectsTool() {
+        // Rescue never retries an unconfirmed outside call, but this call never started.
+        assertRescueAsksAgain(AgentToolTypeTestFixtures.EXTERNAL);
+    }
+
+    private static void assertRescueAsksAgain(String toolType) {
+        Id approverId = AgentKernelTestFactory.approverUser();
+        KernelTestTool.invocationCount = 0;
+        AgentDefinition__c definition = AgentKernelTestFactory.createDefinition();
+        AgentKernelTestFactory.useDelegatedPrincipal(definition);
+        AgentTool__c tool = AgentKernelTestFactory.createTool(definition.Id, 'held_tool', '{"type":"object"}');
+        tool.ToolType__c = toolType;
+        tool.ApprovalMode__c = AgentKernelModels.APPROVAL_ALWAYS_REQUIRED;
+        tool.ApproverType__c = AgentKernelModels.APPROVER_USER;
+        tool.ApproverUser__c = approverId;
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_PAUSE;
+        AgentKernelTestFactory.updateRecord(tool);
+
+        AgentRun__c run = expireApproval(runCall(definition, tool));
+        Id callId = run.CurrentCommand__c;
+        System.assertEquals(AgentKernelModels.RUN_STATUS_PAUSED, run.Status__c, toolType);
+        System.assertEquals('WAIT_EXPIRED', run.ErrorCode__c, toolType);
+        System.assertEquals(AgentKernelModels.ERROR_TOOL_APPROVAL_EXPIRED, AgentKernelTestFactory.getCommand(callId).ErrorCode__c, toolType);
+        System.assertEquals(AgentKernelModels.APPROVAL_STATUS_EXPIRED, AgentKernelTestFactory.pendingApproval(run.Id).Status__c, toolType);
+
+        System.assertEquals(callId, rescue(run), 'Rescue asks again for the same call, whatever its effects: ' + toolType);
+        System.assertEquals('reapprove', rescuePayload(run.Id).get('mode'), toolType);
+        run = runAgain(run);
+        AgentApproval__c second = AgentKernelTestFactory.pendingApproval(run.Id);
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, run.Status__c, toolType);
+        System.assertEquals(0, KernelTestTool.invocationCount, 'Nobody approved the call, so it does not run: ' + toolType);
+        System.assertEquals(AgentKernelModels.APPROVAL_STATUS_PENDING, second.Status__c, toolType);
+        System.assertEquals(approverId, second.OwnerId, toolType);
+        System.assert(second.ExpiresAt__c > System.now(), 'The new approval has a new deadline: ' + toolType);
+        System.assertEquals(2, [SELECT COUNT() FROM AgentApproval__c WHERE AgentRun__c = :run.Id], 'The expired approval stays as history.');
+
+        System.runAs(new User(Id = approverId)) {
+            AgentKernel.decideApproval(AgentKernelTestFactory.approvalDecision(second.Id, true, null));
+        }
+        runAgain(AgentKernelTestFactory.getRun(run.Id));
+        System.assertEquals(1, KernelTestTool.invocationCount, 'The approved call runs once: ' + toolType);
+    }
+
+    @IsTest
+    static void rescueAfterAnExpiredPolicyApprovalAsksThePolicyAgain() {
+        KernelTestTool.invocationCount = 0;
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        KernelTestToolPolicy.configuredApproverUserId = AgentKernelTestFactory.approverUser();
+        AgentDefinition__c definition = policyAgent();
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'held_refund');
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_PAUSE;
+        AgentKernelTestFactory.updateRecord(tool);
+        AgentRun__c run = expireApproval(runCall(definition, tool));
+
+        KernelTestToolPolicy.lastRequest = null;
+        rescue(run);
+        run = runAgain(run);
+
+        System.assertNotEquals(null, KernelTestToolPolicy.lastRequest, 'The policy decides the call again with today\'s rules.');
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, run.Status__c);
+        System.assertEquals(AgentKernelModels.APPROVAL_STATUS_PENDING, AgentKernelTestFactory.pendingApproval(run.Id).Status__c);
+        System.assertEquals(0, KernelTestTool.invocationCount);
+    }
+
+    @IsTest
+    static void rescueAfterAnExpiredApprovalRefusesUsersWithoutRunControl() {
+        KernelTestToolPolicy.configuredDecision = AgentKernelModels.ToolAuthorizationDecision.RequireApproval;
+        KernelTestToolPolicy.configuredApproverUserId = AgentKernelTestFactory.approverUser();
+        AgentDefinition__c definition = policyAgent();
+        AgentTool__c tool = AgentKernelTestFactory.createPolicyTool(definition.Id, 'held_refund');
+        tool.ApprovalExpiryAction__c = AgentKernelModels.APPROVAL_EXPIRY_PAUSE;
+        AgentKernelTestFactory.updateRecord(tool);
+        AgentRun__c run = expireApproval(runCall(definition, tool));
+
+        System.runAs(AgentKernelTestFactory.userWith(new List<String>())) {
+            try {
+                rescue(run);
+                System.assert(false, 'Rescue needs run control.');
+            } catch (AgentKernelException expected) {
+                // Without access the run is not found; with read access, Run Control is still required.
+                System.assert(
+                    expected instanceof AgentKernelException.NotFoundException || expected.getMessage().contains('Run Control'),
+                    expected.getMessage()
+                );
+            }
+        }
+        run = AgentKernelTestFactory.getRun(run.Id);
+        System.assertEquals(AgentKernelModels.RUN_STATUS_PAUSED, run.Status__c);
+        System.assertEquals(1, [SELECT COUNT() FROM AgentApproval__c WHERE AgentRun__c = :run.Id], 'No new approval is asked for.');
+    }
+
+    /** Lets the run's approval pass its deadline with Pause for Operator, as the recovery job does. */
+    private static AgentRun__c expireApproval(AgentRun__c run) {
+        System.assertEquals(AgentKernelModels.RUN_STATUS_WAITING, run.Status__c);
+        AgentKernelTestFactory.updateRecord(new AgentRun__c(Id = run.Id, WaitExpiresAt__c = System.now().addMinutes(-1)));
+        AgentKernelRecovery.expireIntentionalWaits(new Map<Id, Decimal>{ run.Id => run.Revision__c }, System.now());
+        return AgentKernelTestFactory.getRun(run.Id);
+    }
+
+    private static Id rescue(AgentRun__c run) {
+        AgentKernelModels.RescueRequest request = new AgentKernelModels.RescueRequest();
+        request.runId = run.Id;
+        request.expectedRunRevision = run.Revision__c;
+        return AgentKernel.rescue(request);
+    }
+
+    private static Map<String, Object> rescuePayload(Id runId) {
+        AgentEvent__c rescued = [
+            SELECT Payload__c
+            FROM AgentEvent__c
+            WHERE AgentRun__c = :runId AND EventType__c = :AgentKernelModels.EVENT_RUN_RESCUED
+            WITH SYSTEM_MODE
+            ORDER BY Sequence__c DESC
+            LIMIT 1
+        ];
+        return (Map<String, Object>) JSON.deserializeUntyped(rescued.Payload__c);
+    }
+
+    /** Runs the run's current tool call as its worker would. */
+    private static AgentRun__c runAgain(AgentRun__c run) {
+        run = AgentKernelTestFactory.getRun(run.Id);
+        AgentCommand__c command = lease(run.CurrentCommand__c, 'again-' + String.valueOf(Crypto.getRandomInteger()));
+        System.runAs(AgentKernelTestFactory.worker(run.Id)) {
+            new ToolCommandQueueable(run.Id, command.Id, command.ExpectedRunRevision__c, command.OperationKey__c, command.LeaseToken__c).execute(null);
+        }
+        return AgentKernelTestFactory.getRun(run.Id);
+    }
+
     private static AgentRun__c runPolicyCall(String toolName) {
         AgentDefinition__c definition = policyAgent();
         return runCall(definition, AgentKernelTestFactory.createPolicyTool(definition.Id, toolName));

@@ -57,6 +57,14 @@ describe('c-pluto-run-story-call', () => {
         expect(labels).toEqual(['Instructions', 'Context (1)', 'Conversation (1)', 'Tools offered (1)']);
     });
 
+    it('states once that context is data, without a badge on each item', async () => {
+        const element = await render(modelCall());
+        const note = element.shadowRoot.querySelector('.context-note');
+        expect(note.textContent).toBe('The model receives this as data and is told never to follow instructions in it.');
+        expect(element.shadowRoot.querySelectorAll('.context-note')).toHaveLength(1);
+        expect(element.shadowRoot.textContent).not.toContain('Untrusted data');
+    });
+
     it('names each offered tool and links it to its record page', async () => {
         const element = await render(modelCall(), { get_case: 'a05000000000001AAA' });
         const tool = element.shadowRoot.querySelector('.tool');

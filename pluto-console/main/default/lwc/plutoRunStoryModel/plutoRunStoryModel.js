@@ -1027,17 +1027,22 @@ function buildOutcome(run, story = {}) {
         : 'No input. The agent started from its instructions.';
     const parsed = parseJson(run.Output__c);
     let headline = '';
+    // An agent with no output format returns text. That text is Markdown, so the header renders it.
+    // A JSON answer contributes one short field, which stays plain text.
+    let headlineMarkdown = false;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         headline = ['summary', 'answer', 'message', 'reply', 'text'].map((key) => parsed[key]).find((value) => typeof value === 'string' && value.trim()) || '';
     } else if (run.Output__c && !parsed) {
         headline = run.Output__c;
+        headlineMarkdown = true;
     }
     return {
         input: isEmptyInput(run.Input__c) ? '' : run.Input__c,
         inputEmptyText,
         output: run.Output__c || '',
         hasOutput: Boolean(run.Output__c),
-        headline
+        headline,
+        headlineMarkdown
     };
 }
 
@@ -1357,7 +1362,6 @@ function describeModelRequest(request) {
         name: context.sourceName || `Context ${index + 1}`,
         content: context.content || '',
         size: `${formatCount((context.content || '').length)} characters`,
-        untrusted: context.untrusted !== false,
         truncated: Boolean(context.truncated)
     }));
     const transcript = (request.transcript || []).map((entry, index) => {
@@ -1367,8 +1371,7 @@ function describeModelRequest(request) {
             label: entry.toolName ? `${role.label} · ${entry.toolName}` : role.label,
             tone: role.tone,
             className: `turn turn_${role.tone}`,
-            content: entry.content || '',
-            untrusted: Boolean(entry.untrusted)
+            content: entry.content || ''
         };
     });
     // The tool's own page has its description and schema; the step only names what was offered.

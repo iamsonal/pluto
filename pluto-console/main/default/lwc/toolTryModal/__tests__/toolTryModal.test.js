@@ -235,4 +235,24 @@ describe('c-tool-try-modal', () => {
         expect($(element, '[data-run-as]')).toBeNull();
         expect($(element, '[data-result]').textContent).toContain('Ran as Ada Admin');
     });
+
+    it('warns what the execution user cannot read, before and after the dry run, without blocking it', async () => {
+        const access =
+            "The agent's execution user (Agent Service) cannot read Account.AccountNumber. Give that user access in a permission set, or leave those fields out of the tool.";
+        const element = await open({ executionUserAccess: access });
+        expect($(element, '[data-execution-access]').textContent).toContain('cannot read Account.AccountNumber');
+        expect($(element, '[data-execution-access]').textContent).toContain('runs as you');
+        expect(runButton(element).label).toBe('Run');
+
+        tryTool.mockRejectedValue(serverAnswer({ success: true, output: 'done', durationMs: 9, undoneRecordChanges: 0, notUndone: [] }));
+        type(element, 'recordData.Subject', 'Broken printer');
+        runButton(element).click();
+        await flush();
+        expect($(element, '[data-result] [data-execution-access]').textContent).toContain('Account.AccountNumber');
+    });
+
+    it('shows no access warning when the execution user has what the tool needs', async () => {
+        const element = await open({ executionUserAccess: null });
+        expect($(element, '[data-execution-access]')).toBeNull();
+    });
 });
